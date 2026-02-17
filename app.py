@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
 
 import requests
@@ -8,25 +10,32 @@ from src import watchlist, market_sentiment, stock_analysis
 app = Flask(__name__)
 app.secret_key = "invest-secret-key"
 
-
-@app.before_request
-def setup():
-    init_db()
+# DB 초기화: 서버 시작 시 1회만 실행 (매 요청마다 실행 X)
+init_db()
 
 
 @app.route("/")
 def index():
-    fear_greed   = market_sentiment.get_fear_greed()
-    vix          = market_sentiment.get_vix()
-    market_rsi   = market_sentiment.get_market_rsi()
-    cpi          = market_sentiment.get_cpi()
-    yield_curve  = market_sentiment.get_yield_curve()
-    fear_score   = market_sentiment.get_fear_score()
+    # 시장심리 5개 지표 + fear_score 를 동시에 병렬 조회
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        f_fg  = ex.submit(market_sentiment.get_fear_greed)
+        f_vix = ex.submit(market_sentiment.get_vix)
+        f_rsi = ex.submit(market_sentiment.get_market_rsi)
+        f_cpi = ex.submit(market_sentiment.get_cpi)
+        f_yc  = ex.submit(market_sentiment.get_yield_curve)
+        f_fs  = ex.submit(market_sentiment.get_fear_score)
+
+    fear_greed  = f_fg.result()
+    vix         = f_vix.result()
+    market_rsi  = f_rsi.result()
+    cpi         = f_cpi.result()
+    yield_curve = f_yc.result()
+    fear_score  = f_fs.result()
 
     tickers = watchlist.get_tickers()
     yield_spread = yield_curve.get("spread") if yield_curve.get("available") else None
-    stocks  = stock_analysis.enrich_watchlist(tickers, fear_score,
-                                              yield_spread=yield_spread) if tickers else []
+    stocks = stock_analysis.enrich_watchlist(tickers, fear_score,
+                                             yield_spread=yield_spread) if tickers else []
 
     return render_template(
         "index.html",
@@ -42,9 +51,15 @@ def index():
 
 @app.route("/stock/<ticker>")
 def stock_detail(ticker):
-    fear_score  = market_sentiment.get_fear_score()
-    yield_curve = market_sentiment.get_yield_curve()
-    stock_data  = stock_analysis.get_stock_data(ticker.upper())
+    # 공포점수, 금리차, 종목데이터 3개 동시 조회
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        f_fs   = ex.submit(market_sentiment.get_fear_score)
+        f_yc   = ex.submit(market_sentiment.get_yield_curve)
+        f_data = ex.submit(stock_analysis.get_stock_data, ticker.upper())
+
+    fear_score  = f_fs.result()
+    yield_curve = f_yc.result()
+    stock_data  = f_data.result()
 
     from src.scoring import calc_recommendation_score
     yield_spread = yield_curve.get("spread") if yield_curve.get("available") else None

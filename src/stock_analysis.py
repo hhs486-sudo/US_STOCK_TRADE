@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import yfinance as yf
@@ -256,93 +257,57 @@ def get_batch_prices(tickers: list[str]) -> dict:
 
 def get_live_prices(tickers: list[str]) -> dict:
     """
-    여러 종목의 현재가만 빠르게 가져오는 함수.
-    캐시 TTL: 30초 (자동갱신 주기와 동일).
-    ATH·펀더멘탈 등 무거운 데이터는 조회하지 않아 빠름.
-
-    가격 조회 우선순위:
-      1) fast_info.last_price  — 가장 최신 거래가
-      2) fast_info.previous_close — 장 외 시간 폴백
-      3) yf.download 1분봉 마지막 종가 — 추가 폴백
+    여러 종목의 현재가를 병렬로 빠르게 가져오는 함수.
+    캐시 TTL: CACHE_TTL["price"] (기본 10초).
 
     반환: {ticker: current_price, ...}
     """
-    prices = {}
-    for ticker in tickers:
+    def _fetch_one(ticker):
         key = f"price_{ticker}"
-        # 30초 캐시 확인
         cached = cache_get(key, config.CACHE_TTL["price"])
         if cached:
-            prices[ticker] = cached.get("price")
-            continue
+            return ticker, cached.get("price")
         try:
-            # 1순위: prepost=True 1분봉 — 프리마켓/애프터마켓 포함 최신 가격
             hist = yf.Ticker(ticker).history(
                 period="1d", interval="1m", prepost=True
             )
-            if not hist.empty:
-                price = float(hist["Close"].iloc[-1])
-            else:
-                price = None
+            price = float(hist["Close"].iloc[-1]) if not hist.empty else None
 
-            # 2순위: fast_info.last_price (정규 세션 최신가)
             if not price:
-                fi = yf.Ticker(ticker).fast_info
-                price = getattr(fi, "last_price", None)
-
-            # 3순위: 전일 종가 폴백
+                price = getattr(yf.Ticker(ticker).fast_info, "last_price", None)
             if not price:
-                fi = yf.Ticker(ticker).fast_info
-                price = getattr(fi, "previous_close", None)
+                price = getattr(yf.Ticker(ticker).fast_info, "previous_close", None)
 
             if price:
                 price = round(float(price), 2)
                 cache_set(key, {"price": price})
-                prices[ticker] = price
-            else:
-                prices[ticker] = None
-
+            return ticker, price
         except Exception:
-            prices[ticker] = None
+            return ticker, None
 
-    return prices
+    # 모든 티커 병렬 조회
+    with ThreadPoolExecutor(max_workers=min(len(tickers), 8)) as ex:
+        return dict(ex.map(_fetch_one, tickers))
 
 
 def enrich_watchlist(tickers: list[str], fear_score: int,
                      yield_spread=None) -> list[dict]:
     """
-    Watchlist 종목 전체 데이터 수집 + 추천 점수 추가, 점수 내림차순 정렬.
-    현재가는 30초 캐시(get_live_prices)로 최신화하여 가격 정확도를 높임.
-    ATH·펀더멘탈 등 무거운 데이터는 6시간 캐시 유지.
-    yield_spread: 장단기 금리차 (침체 패널티 계산용)
+    Watchlist 종목 전체 데이터 수집 + 추천 점수, 점수 내림차순 정렬.
+
+    초기 렌더링은 6시간 캐시 데이터를 병렬 조회 → 즉시 반환.
+    실시간 가격은 /api/prices AJAX(10초)가 담당하므로 live_prices 불필요.
     """
-    # 1단계: 모든 종목의 최신 현재가를 한 번에 조회 (5분 캐시)
-    live_prices = get_live_prices(tickers)
+    if not tickers:
+        return []
+
+    # 모든 종목 데이터를 동시에 병렬 조회 (캐시 적중 시 즉시 반환)
+    with ThreadPoolExecutor(max_workers=min(len(tickers), 8)) as ex:
+        stock_futures = {ticker: ex.submit(get_stock_data, ticker) for ticker in tickers}
 
     results = []
     for ticker in tickers:
-        data = get_stock_data(ticker)
-
-        # 2단계: 실시간 가격 덮어쓰기 (항상 적용, ATH 낙폭·Upside도 재계산)
-        live_price = live_prices.get(ticker)
-        if live_price:
-            data["current_price"] = live_price   # 현재가 항상 최신화
-
-            # ATH 낙폭 재계산 (ATH 데이터가 있는 경우)
-            if data.get("ath"):
-                data["ath_drawdown_pct"] = round(
-                    (live_price - data["ath"]) / data["ath"] * 100, 1
-                )
-            if data.get("high_52w"):
-                data["high_52w_drawdown_pct"] = round(
-                    (live_price - data["high_52w"]) / data["high_52w"] * 100, 1
-                )
-            # 목표가 대비 Upside 재계산
-            if data.get("target_price"):
-                data["target_upside_pct"] = round(
-                    (data["target_price"] - live_price) / live_price * 100, 1
-                )
-
+        data = stock_futures[ticker].result()
         score_data = scoring.calc_recommendation_score(fear_score, data,
                                                        yield_spread=yield_spread)
         results.append({**data, **score_data})

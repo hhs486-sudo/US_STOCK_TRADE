@@ -3,12 +3,21 @@
 
 DATABASE_URL 환경변수가 있으면 PostgreSQL(운영),
 없으면 SQLite(로컬 개발) 자동 선택.
+
+캐시 2계층:
+  L1 - 프로세스 메모리 (ns 접근, 서버 재시작 시 초기화)
+  L2 - DB (SQLite 또는 PostgreSQL, 재시작 후에도 유지)
 """
 import json
 import os
+import threading
 from datetime import datetime, timedelta
 
 import config
+
+# ── L1 인메모리 캐시 (네트워크 왕복 없이 즉시 반환) ──
+_mem: dict = {}          # {key: {"data": ..., "ts": datetime}}
+_mem_lock = threading.Lock()
 
 # ── 드라이버 선택 ──────────────────────────────
 DATABASE_URL = os.getenv("DATABASE_URL", "")
@@ -84,7 +93,15 @@ def init_db():
 
 # ── 캐시 조회 ──────────────────────────────────
 def cache_get(key: str, ttl_seconds: int) -> dict | None:
-    """캐시에서 데이터 조회. TTL 초과 시 None 반환."""
+    """캐시에서 데이터 조회. L1(메모리) → L2(DB) 순으로 확인. TTL 초과 시 None."""
+    # L1: 메모리 캐시 우선 확인 (네트워크 왕복 없음)
+    with _mem_lock:
+        entry = _mem.get(key)
+    if entry:
+        if datetime.utcnow() - entry["ts"] < timedelta(seconds=ttl_seconds):
+            return entry["data"]
+
+    # L2: DB 조회
     conn = get_conn()
     try:
         cur = conn.cursor()
@@ -105,42 +122,63 @@ def cache_get(key: str, ttl_seconds: int) -> dict | None:
     if datetime.utcnow() - updated.replace(tzinfo=None) > timedelta(seconds=ttl_seconds):
         return None
 
-    return json.loads(row["data"])
+    data = json.loads(row["data"])
+    # L1 캐시에 저장 (다음 요청은 메모리에서 즉시 반환)
+    with _mem_lock:
+        _mem[key] = {"data": data, "ts": updated.replace(tzinfo=None)}
+    return data
 
 
 # ── 캐시 저장 ──────────────────────────────────
 def cache_set(key: str, data: dict):
-    """캐시에 데이터 저장 (upsert)."""
-    conn = get_conn()
-    try:
-        cur = conn.cursor()
-        serialized = json.dumps(data, ensure_ascii=False, default=str)
-        if USE_PG:
-            cur.execute(
-                """INSERT INTO cache (key, data, updated_at)
-                   VALUES (%s, %s, NOW())
-                   ON CONFLICT (key) DO UPDATE SET
-                       data = EXCLUDED.data,
-                       updated_at = EXCLUDED.updated_at""",
-                (key, serialized),
-            )
-        else:
-            cur.execute(
-                """INSERT INTO cache (key, data, updated_at)
-                   VALUES (?, ?, datetime('now'))
-                   ON CONFLICT(key) DO UPDATE SET
-                       data = excluded.data,
-                       updated_at = excluded.updated_at""",
-                (key, serialized),
-            )
-        conn.commit()
-    finally:
-        conn.close()
+    """캐시에 데이터 저장 (L1 메모리 + L2 DB upsert)."""
+    now = datetime.utcnow()
+
+    # L1: 메모리 즉시 업데이트
+    with _mem_lock:
+        _mem[key] = {"data": data, "ts": now}
+
+    # L2: DB 비동기 저장 (별도 스레드 — 응답 지연 없음)
+    def _write_db():
+        conn = get_conn()
+        try:
+            cur = conn.cursor()
+            serialized = json.dumps(data, ensure_ascii=False, default=str)
+            if USE_PG:
+                cur.execute(
+                    """INSERT INTO cache (key, data, updated_at)
+                       VALUES (%s, %s, NOW())
+                       ON CONFLICT (key) DO UPDATE SET
+                           data = EXCLUDED.data,
+                           updated_at = EXCLUDED.updated_at""",
+                    (key, serialized),
+                )
+            else:
+                cur.execute(
+                    """INSERT INTO cache (key, data, updated_at)
+                       VALUES (?, ?, datetime('now'))
+                       ON CONFLICT(key) DO UPDATE SET
+                           data = excluded.data,
+                           updated_at = excluded.updated_at""",
+                    (key, serialized),
+                )
+            conn.commit()
+        except Exception:
+            pass
+        finally:
+            conn.close()
+
+    threading.Thread(target=_write_db, daemon=True).start()
 
 
 # ── 캐시 원본 조회 (TTL 무시) ──────────────────
 def cache_get_raw(key: str) -> dict | None:
-    """TTL 무시하고 캐시 데이터 조회 (fallback용)."""
+    """TTL 무시하고 캐시 데이터 조회 (fallback용). L1 메모리 우선."""
+    with _mem_lock:
+        entry = _mem.get(key)
+    if entry:
+        return entry["data"]
+
     conn = get_conn()
     try:
         cur = conn.cursor()

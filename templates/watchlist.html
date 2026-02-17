@@ -175,7 +175,7 @@
             </span>
           </td>
           <td class="text-muted small">{{ item.memo or '-' }}</td>
-          <td class="text-muted small">{{ item.added_at[:10] if item.added_at else '-' }}</td>
+          <td class="text-muted small">{{ item.added_at.strftime('%Y-%m-%d') if item.added_at else '-' }}</td>
           <td>
             <form method="POST" action="/watchlist/delete"
               onsubmit="return confirm('{{ item.ticker }} 를 삭제할까요?')">

@@ -1,0 +1,691 @@
+{% extends "base.html" %}
+{% block title %}{{ stock.ticker }} 상세 — 미국주식 추천{% endblock %}
+
+{% block content %}
+
+<div class="mb-3">
+  <a href="/" class="btn btn-outline-secondary btn-sm">← 대시보드</a>
+</div>
+
+{% if stock.error %}
+  <div class="alert alert-danger">{{ stock.ticker }} 데이터를 불러올 수 없습니다: {{ stock.error }}</div>
+{% else %}
+
+<!-- 헤더 -->
+<div class="d-flex align-items-baseline gap-3 mb-3 flex-wrap">
+  <h3 class="mb-0">{{ stock.ticker }}</h3>
+  <span class="text-muted">{{ stock.name }}</span>
+  <!-- 현재가: AJAX로 10초마다 갱신 -->
+  <span id="detailPrice" class="fs-4 fw-bold"
+    data-ticker="{{ stock.ticker }}"
+    data-price="{{ stock.current_price }}">
+    ${{ "%.2f"|format(stock.current_price) }}
+  </span>
+  <!-- 전일 대비 변동률 (AJAX가 채워줌) -->
+  <span id="detailChange" class="small"></span>
+  {% if stock.sector %}
+    <span class="badge bg-secondary">{{ stock.sector }}</span>
+  {% endif %}
+  <span id="detailUpdatedAt" class="text-muted small"></span>
+</div>
+
+<!-- 추천 점수 카드 -->
+<div class="card mb-4 p-3 border-2" style="border-color:{{ score.grade_color }}!important">
+  <div class="row align-items-center g-3">
+    <div class="col-auto text-center">
+      <div class="text-muted small">종합 추천 점수</div>
+      <div class="display-4 fw-bold" style="color:{{ score.grade_color }}">{{ score.total_score }}</div>
+      <span class="badge fs-6 grade-badge"
+        style="background:{{ score.grade_color }}; cursor:pointer"
+        data-ticker="{{ stock.ticker }}"
+        data-name="{{ stock.name }}"
+        data-total="{{ score.total_score }}"
+        data-grade="{{ score.grade }}"
+        data-grade-color="{{ score.grade_color }}"
+        data-fear="{{ score.fear_score }}"
+        data-drawdown-score="{{ score.drawdown_score }}"
+        data-fundamental="{{ score.fundamental_score if score.fundamental_score is not none else '' }}"
+        data-recession="{{ score.recession_penalty if score.recession_penalty is defined else 0 }}"
+        data-ath-drawdown="{{ stock.ath_drawdown_pct }}"
+        data-buy-ratio="{{ stock.buy_ratio_pct if stock.buy_ratio_pct is not none else '' }}"
+        data-forward-pe="{{ stock.forward_pe if stock.forward_pe is not none else '' }}"
+        data-roe="{{ stock.roe if (stock.roe is defined and stock.roe is not none) else '' }}"
+        data-peg="{{ stock.peg if (stock.peg is defined and stock.peg is not none) else '' }}"
+        data-fcf="{{ '양호' if stock.fcf_positive else '부족' }}"
+        data-is-etf="{{ 'true' if stock.is_etf else 'false' }}"
+        data-reason="{{ score.reason }}">
+        {{ score.grade }}
+      </span>
+    </div>
+    <div class="col">
+      <div class="mb-2 text-muted small">근거: {{ score.reason }}</div>
+      <div class="row g-2">
+        <div class="col-4 text-center">
+          <div class="small text-muted">공포 점수</div>
+          <div class="fw-bold">{{ score.fear_score }}/100</div>
+          <div class="progress mt-1" style="height:6px">
+            <div class="progress-bar bg-danger" style="width:{{ score.fear_score }}%"></div>
+          </div>
+        </div>
+        <div class="col-4 text-center">
+          <div class="small text-muted">낙폭 점수</div>
+          <div class="fw-bold">{{ score.drawdown_score }}/100</div>
+          <div class="progress mt-1" style="height:6px">
+            <div class="progress-bar bg-warning" style="width:{{ score.drawdown_score }}%"></div>
+          </div>
+        </div>
+        <div class="col-4 text-center">
+          <div class="small text-muted">펀더멘탈</div>
+          <div class="fw-bold">{{ score.fundamental_score }}/100</div>
+          <div class="progress mt-1" style="height:6px">
+            <div class="progress-bar bg-success" style="width:{{ score.fundamental_score }}%"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 차트 + 낙폭 -->
+<div class="row g-3 mb-4">
+  <div class="col-md-8">
+    <div class="card p-3 h-100">
+      <!-- 이동평균 범례 -->
+      <div class="d-flex align-items-center gap-3 mb-2 flex-wrap">
+        <span class="small text-muted">1년 주가 추이</span>
+        <span class="small"><span style="color:#3498db">━</span> 종가</span>
+        <span class="small"><span style="color:#e67e22">━</span> MA20</span>
+        <span class="small"><span style="color:#9b59b6">━</span> MA60</span>
+        <span class="small"><span style="color:#e74c3c">━</span> MA120</span>
+      </div>
+      <!-- 주가 + 이동평균 차트 -->
+      <canvas id="priceChart" style="max-height:240px"></canvas>
+      <!-- 거래량 차트 -->
+      <div class="small text-muted mt-3 mb-1">거래량</div>
+      <canvas id="volumeChart" style="max-height:80px"></canvas>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card p-3 h-100">
+      <div class="small text-muted mb-2">고점 대비 낙폭</div>
+      <table class="table table-sm">
+        <tr>
+          <td class="text-muted">현재가</td>
+          <td class="fw-bold">${{ "%.2f"|format(stock.current_price) }}</td>
+        </tr>
+        <tr>
+          <td class="text-muted">역대 최고가(ATH)</td>
+          <td>${{ "%.2f"|format(stock.ath) }} <span class="text-muted small">({{ stock.ath_date }})</span></td>
+        </tr>
+        <tr>
+          <td class="text-muted">ATH 대비 낙폭</td>
+          <td class="fw-bold {% if stock.ath_drawdown_pct <= -30 %}text-danger{% elif stock.ath_drawdown_pct <= -15 %}text-warning{% endif %}">
+            {{ stock.ath_drawdown_pct }}%
+          </td>
+        </tr>
+        <tr>
+          <td class="text-muted">52주 최고가</td>
+          <td>${{ "%.2f"|format(stock.high_52w) }}</td>
+        </tr>
+        <tr>
+          <td class="text-muted">52주 고점 대비</td>
+          <td class="{% if stock.high_52w_drawdown_pct <= -15 %}text-warning{% endif %}">
+            {{ stock.high_52w_drawdown_pct }}%
+          </td>
+        </tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- 펀더멘탈 + 애널리스트 -->
+<div class="row g-3 mb-4">
+  <div class="col-md-5">
+    <div class="card p-3 h-100">
+      {% if stock.is_etf %}
+        <div class="small text-muted mb-2">ETF 지표 <span class="badge bg-info text-dark ms-1">ETF</span></div>
+        <table class="table table-sm">
+          <tr>
+            <td class="text-muted">Trailing PER</td>
+            <td>{{ stock.trailing_pe if stock.trailing_pe else 'N/A' }}</td>
+          </tr>
+          <tr>
+            <td class="text-muted">YTD 수익률</td>
+            <td class="{% if stock.ytd_return and stock.ytd_return > 0 %}text-success{% elif stock.ytd_return %}text-danger{% endif %}">
+              {{ ('+' if stock.ytd_return and stock.ytd_return > 0 else '') + stock.ytd_return|string + '%' if stock.ytd_return is not none else 'N/A' }}
+            </td>
+          </tr>
+          <tr>
+            <td class="text-muted">3년 평균 수익률</td>
+            <td class="{% if stock.three_year_return and stock.three_year_return > 0 %}text-success{% elif stock.three_year_return %}text-danger{% endif %}">
+              {{ ('+' if stock.three_year_return and stock.three_year_return > 0 else '') + stock.three_year_return|string + '%' if stock.three_year_return is not none else 'N/A' }}
+            </td>
+          </tr>
+          <tr>
+            <td class="text-muted">운용자산 (AUM)</td>
+            <td>
+              {% if stock.total_assets %}
+                ${{ "%.1fB"|format(stock.total_assets / 1e9) if stock.total_assets >= 1e9 else "%.0fM"|format(stock.total_assets / 1e6) }}
+              {% else %}N/A{% endif %}
+            </td>
+          </tr>
+        </table>
+        <div class="alert alert-light p-2 small mt-1 mb-0">
+          ETF는 펀더멘탈 점수 대신 <strong>시장 공포 + 낙폭</strong> 기준으로 점수를 산출합니다.
+        </div>
+      {% else %}
+        <div class="small text-muted mb-2">펀더멘탈 지표</div>
+        <table class="table table-sm">
+          <tr>
+            <td class="text-muted"
+              data-bs-toggle="tooltip"
+              data-bs-title="향후 12개월 예상 실적 기준 주가수익비율. 낮을수록 저평가. 업종 평균 대비 판단 권장">
+              Forward PER ℹ
+            </td>
+            <td class="fw-bold">{{ stock.forward_pe if stock.forward_pe else 'N/A' }}</td>
+          </tr>
+          <tr>
+            <td class="text-muted"
+              data-bs-toggle="tooltip"
+              data-bs-title="과거 12개월 실적 기준 주가수익비율. Forward PER보다 현실적이나 과거 지표임">
+              Trailing PER ℹ
+            </td>
+            <td>{{ stock.trailing_pe if stock.trailing_pe else 'N/A' }}</td>
+          </tr>
+          <tr>
+            <td class="text-muted"
+              data-bs-toggle="tooltip"
+              data-bs-title="PEG = PER ÷ EPS성장률. 1 미만이면 성장 대비 저평가, 2 이상이면 고평가 신호">
+              PEG ℹ
+            </td>
+            {% set peg_val = stock.peg if (stock.peg is defined and stock.peg) else none %}
+            <td class="{% if peg_val and peg_val < 1 %}text-success fw-bold{% elif peg_val and peg_val > 2 %}text-danger{% endif %}">
+              {% if peg_val %}
+                {{ peg_val }}
+                {% if peg_val < 1 %}<span class="badge bg-success ms-1" style="font-size:0.65rem">저평가</span>{% endif %}
+              {% else %}N/A{% endif %}
+            </td>
+          </tr>
+          <tr>
+            <td class="text-muted"
+              data-bs-toggle="tooltip"
+              data-bs-title="자기자본이익률. 순이익 ÷ 자기자본. 15% 이상이면 우량, 높을수록 자본 효율성 좋음">
+              ROE ℹ
+            </td>
+            {% set roe_val = stock.roe if (stock.roe is defined and stock.roe is not none) else none %}
+            <td class="{% if roe_val is not none and roe_val >= 15 %}text-success{% elif roe_val is not none and roe_val < 0 %}text-danger{% endif %}">
+              {{ roe_val|string + '%' if roe_val is not none else 'N/A' }}
+            </td>
+          </tr>
+          <tr>
+            <td class="text-muted"
+              data-bs-toggle="tooltip"
+              data-bs-title="주당순이익 증가율(전년 동기 대비). 10% 이상이면 고성장, 높을수록 성장성 우수">
+              EPS 성장률 ℹ
+            </td>
+            <td class="{% if stock.eps_growth_pct and stock.eps_growth_pct > 0 %}text-success{% elif stock.eps_growth_pct %}text-danger{% endif %}">
+              {{ ('+' if stock.eps_growth_pct and stock.eps_growth_pct > 0 else '') + stock.eps_growth_pct|string + '%' if stock.eps_growth_pct is not none else 'N/A' }}
+            </td>
+          </tr>
+          <tr>
+            <td class="text-muted"
+              data-bs-toggle="tooltip"
+              data-bs-title="전년 대비 매출 증가율. 지속적 매출 성장이 주가 상승의 기반">
+              매출 성장률 ℹ
+            </td>
+            <td class="{% if stock.revenue_growth_pct and stock.revenue_growth_pct > 0 %}text-success{% endif %}">
+              {{ ('+' if stock.revenue_growth_pct and stock.revenue_growth_pct > 0 else '') + stock.revenue_growth_pct|string + '%' if stock.revenue_growth_pct is not none else 'N/A' }}
+            </td>
+          </tr>
+          <tr>
+            <td class="text-muted"
+              data-bs-toggle="tooltip"
+              data-bs-title="잉여현금흐름. 영업활동 후 남은 현금. 양수일수록 재무건전, 배당·자사주매입 여력">
+              FCF ℹ
+            </td>
+            <td class="{% if stock.fcf_positive %}text-success{% else %}text-danger{% endif %}">
+              {% if stock.free_cash_flow is not none %}
+                {{ '+' if stock.fcf_positive else '' }}${{ "%.1fB"|format(stock.free_cash_flow / 1e9) if stock.free_cash_flow|abs >= 1e9 else "%.0fM"|format(stock.free_cash_flow / 1e6) }}
+              {% else %}N/A{% endif %}
+            </td>
+          </tr>
+        </table>
+      {% endif %}
+    </div>
+  </div>
+  <div class="col-md-7">
+    <div class="card p-3 h-100">
+      <div class="small text-muted mb-2">애널리스트 투자의견 (총 {{ stock.analyst_count }}명)</div>
+      {% if stock.analyst_count > 0 %}
+        {% set total = stock.strong_buy + stock.buy + stock.hold + stock.sell + stock.strong_sell %}
+        {% if total > 0 %}
+          <div class="mb-2">
+            <div class="d-flex mb-1" style="height:22px; border-radius:4px; overflow:hidden">
+              {% if stock.strong_buy %}
+                <div class="bg-success" style="width:{{ (stock.strong_buy/total*100)|round }}%;opacity:.9" title="Strong Buy: {{stock.strong_buy}}"></div>
+              {% endif %}
+              {% if stock.buy %}
+                <div class="bg-success" style="width:{{ (stock.buy/total*100)|round }}%" title="Buy: {{stock.buy}}"></div>
+              {% endif %}
+              {% if stock.hold %}
+                <div class="bg-warning" style="width:{{ (stock.hold/total*100)|round }}%" title="Hold: {{stock.hold}}"></div>
+              {% endif %}
+              {% if stock.sell %}
+                <div class="bg-danger" style="width:{{ (stock.sell/total*100)|round }}%;opacity:.8" title="Sell: {{stock.sell}}"></div>
+              {% endif %}
+              {% if stock.strong_sell %}
+                <div class="bg-danger" style="width:{{ (stock.strong_sell/total*100)|round }}%" title="Strong Sell: {{stock.strong_sell}}"></div>
+              {% endif %}
+            </div>
+            <div class="d-flex gap-3 small">
+              <span class="text-success">Strong Buy {{ stock.strong_buy }}</span>
+              <span class="text-success">Buy {{ stock.buy }}</span>
+              <span class="text-warning">Hold {{ stock.hold }}</span>
+              <span class="text-danger">Sell {{ stock.sell + stock.strong_sell }}</span>
+            </div>
+          </div>
+        {% endif %}
+        <table class="table table-sm mt-2">
+          <tr>
+            <td class="text-muted">Buy 비율</td>
+            <td class="fw-bold {% if stock.buy_ratio_pct and stock.buy_ratio_pct >= 70 %}text-success{% endif %}">
+              {{ stock.buy_ratio_pct ~ '%' if stock.buy_ratio_pct is not none else 'N/A' }}
+            </td>
+          </tr>
+          <tr>
+            <td class="text-muted">평균 목표주가</td>
+            <td class="fw-bold">${{ "%.2f"|format(stock.target_price) if stock.target_price else 'N/A' }}</td>
+          </tr>
+          <tr>
+            <td class="text-muted">목표가 Upside</td>
+            <td class="{% if stock.target_upside_pct and stock.target_upside_pct > 0 %}text-success{% elif stock.target_upside_pct %}text-danger{% endif %} fw-bold">
+              {{ ('+' if stock.target_upside_pct and stock.target_upside_pct > 0 else '') + stock.target_upside_pct|string + '%' if stock.target_upside_pct is not none else 'N/A' }}
+            </td>
+          </tr>
+        </table>
+      {% else %}
+        <div class="text-muted small">애널리스트 데이터 없음 (ETF 또는 데이터 미제공)</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- 외부 링크 -->
+<div class="mb-4">
+  <div class="small text-muted mb-1">외부 리서치</div>
+  <div class="d-flex gap-2">
+    <a href="https://finance.yahoo.com/quote/{{ stock.ticker }}" target="_blank" class="btn btn-outline-primary btn-sm">Yahoo Finance</a>
+    <a href="https://www.investing.com/search/?q={{ stock.ticker }}" target="_blank" class="btn btn-outline-secondary btn-sm">Investing.com</a>
+    <a href="https://seekingalpha.com/symbol/{{ stock.ticker }}" target="_blank" class="btn btn-outline-secondary btn-sm">Seeking Alpha</a>
+  </div>
+</div>
+
+<!-- 장단기 금리차 패널티 표시 -->
+{% if yield_curve and yield_curve.available and yield_curve.status != 'normal' %}
+<div class="alert alert-{% if yield_curve.status == 'deeply_inverted' %}danger{% elif yield_curve.status == 'inverted' %}warning{% else %}info{% endif %} py-2 small mb-3">
+  <strong>장단기 금리차:</strong>
+  {{ '%+.2f'|format(yield_curve.spread) }}% ({{ yield_curve.status_label }})
+  &nbsp;|&nbsp; 10Y {{ yield_curve.rate_10y }}% / 2Y {{ yield_curve.rate_2y }}%
+  {% if score.recession_penalty > 0 %}
+    &nbsp;→ <strong>추천 점수 -{{ score.recession_penalty }}점 반영</strong>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="text-muted small">
+  마지막 갱신: {{ stock.updated }} &nbsp;|&nbsp;
+  ※ 본 정보는 투자 의사결정 참고용이며, 투자 손익에 대한 책임은 투자자 본인에게 있습니다.
+</div>
+
+<!-- ── 등급 상세 분석 모달 ── -->
+<div class="modal fade" id="gradeModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header" id="modalHeader">
+        <h5 class="modal-title" id="modalTitle">종목 분석</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="modalBody">
+        <!-- JS가 채워줌 -->
+      </div>
+      <div class="modal-footer">
+        <small class="text-muted me-auto">※ 규칙 기반 점수로 투자 결정의 참고 자료입니다.</small>
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">닫기</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* Bootstrap 툴팁 초기화 */
+document.addEventListener("DOMContentLoaded", function () {
+  document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function (el) {
+    new bootstrap.Tooltip(el, { placement: "top", trigger: "hover", html: true, sanitize: false });
+  });
+});
+
+/* ── 등급 배지 클릭 → 모달 상세 분석 ── */
+document.addEventListener("click", function (e) {
+  var badge = e.target.closest(".grade-badge");
+  if (!badge) return;
+
+  var ticker     = badge.dataset.ticker;
+  var name       = badge.dataset.name;
+  var total      = parseInt(badge.dataset.total);
+  var grade      = badge.dataset.grade;
+  var gradeColor = badge.dataset.gradeColor;
+  var fear       = parseInt(badge.dataset.fear);
+  var ddScore    = parseInt(badge.dataset.drawdownScore);
+  var fundScore  = badge.dataset.fundamental !== "" ? parseInt(badge.dataset.fundamental) : null;
+  var recession  = parseInt(badge.dataset.recession || "0");
+  var athDd      = parseFloat(badge.dataset.athDrawdown);
+  var buyRatio   = badge.dataset.buyRatio !== "" ? parseFloat(badge.dataset.buyRatio) : null;
+  var fpe        = badge.dataset.forwardPe !== "" ? parseFloat(badge.dataset.forwardPe) : null;
+  var roe        = badge.dataset.roe !== "" ? parseFloat(badge.dataset.roe) : null;
+  var peg        = badge.dataset.peg !== "" ? parseFloat(badge.dataset.peg) : null;
+  var fcf        = badge.dataset.fcf;
+  var isEtf      = badge.dataset.isEtf === "true";
+  var reason     = badge.dataset.reason;
+
+  document.getElementById("modalHeader").style.background = gradeColor + "22";
+  document.getElementById("modalTitle").innerHTML =
+    ticker + " <small class='text-muted'>" + name.substring(0, 30) + "</small>" +
+    " &nbsp;<span class='badge' style='background:" + gradeColor + "'>" + grade + "</span>";
+
+  function fearDesc(s) {
+    if (s >= 70) return "시장 극도 공포 — 역사적 저점 근처 가능성이 높습니다.";
+    if (s >= 50) return "시장 불안·하락 — 공포 분위기가 퍼져 있는 상태입니다.";
+    if (s >= 30) return "다소 불안 — 하락 압력이 있으나 아직 공포 수준은 아닙니다.";
+    return "시장 안정·탐욕 상태 — 매수 타이밍으로는 불리합니다.";
+  }
+  function ddDesc(d) {
+    if (d == null) return "낙폭 데이터 없음";
+    var pct = Math.abs(d);
+    if (pct >= 50) return "ATH 대비 " + d + "% — 반토막 수준, 강력한 매수 구간";
+    if (pct >= 30) return "ATH 대비 " + d + "% — 큰 조정, 매수 적극 검토 구간";
+    if (pct >= 20) return "ATH 대비 " + d + "% — 중간 조정, 매수 고려 가능";
+    if (pct >= 10) return "ATH 대비 " + d + "% — 소폭 조정, 충분한 하락 아님";
+    return "ATH 대비 " + d + "% — 고점 근처, 매수 주의";
+  }
+  function fundDesc(score, buy, pe, roe, peg, fcf) {
+    if (score == null) return "ETF — 펀더멘탈 평가 제외 (Fear + 낙폭만 적용)";
+    var parts = [];
+    if (buy != null) parts.push("Buy비율 " + buy + "%" + (buy >= 70 ? " ✓" : ""));
+    if (pe  != null) parts.push("Forward PE " + pe + (pe < 20 ? " ✓" : pe > 30 ? " ✗" : ""));
+    if (roe != null) parts.push("ROE " + roe + "%" + (roe >= 15 ? " ✓" : ""));
+    if (peg != null) parts.push("PEG " + peg + (peg < 1 ? " ✓저평가" : peg > 2 ? " ✗고평가" : ""));
+    if (fcf)         parts.push("FCF " + fcf + (fcf === "양호" ? " ✓" : " ✗"));
+    return parts.length ? parts.join(" &nbsp;|&nbsp; ") : "데이터 부족";
+  }
+  function recessionDesc(penalty) {
+    if (penalty >= 25) return "장단기 금리차 심각 역전 — 경기침체 강한 경고 신호 (-25점 반영)";
+    if (penalty >= 15) return "장단기 금리차 역전 — 침체 선행지표 발동 (-15점 반영)";
+    if (penalty >= 5)  return "장단기 금리차 플랫화 — 경기 둔화 주의 (-5점 반영)";
+    return "장단기 금리차 정상 — 침체 패널티 없음";
+  }
+  function gradeDesc(g) {
+    if (g.includes("강력")) return "시장 공포 + 큰 낙폭 + 우수한 펀더멘탈이 동시에 충족된 최적 매수 타이밍입니다. 분할 매수를 적극 고려하세요.";
+    if (g.includes("매수 고려")) return "일부 조건이 충족된 매수 고려 구간입니다. 추가 하락 가능성을 고려해 소량부터 분할 접근을 권장합니다.";
+    if (g.includes("관망")) return "매수 조건이 부분적으로만 충족됩니다. 시장 상황을 더 지켜보거나 하락 시 준비하는 단계입니다.";
+    return "현재 매수 조건이 불충분합니다. 시장 안정 또는 가격 조정을 기다리는 것을 권장합니다.";
+  }
+  function progressBar(score, max, color) {
+    var pct = max > 0 ? Math.round(score / max * 100) : 0;
+    return '<div class="progress" style="height:10px"><div class="progress-bar" style="width:' +
+      pct + '%;background:' + color + '">' + score + '/' + max + '</div></div>';
+  }
+
+  var baseScore = total + recession;
+  var html = '';
+
+  html += '<div class="mb-4">';
+  html += '<div class="d-flex align-items-center gap-3 mb-2">';
+  html += '<div class="text-center" style="min-width:80px">';
+  html += '<div class="display-4 fw-bold" style="color:' + gradeColor + '">' + total + '</div>';
+  html += '<div class="small text-muted">/ 100점</div></div>';
+  html += '<div class="flex-grow-1">';
+  html += progressBar(total, 100, gradeColor);
+  html += '<div class="mt-2 small">' + gradeDesc(grade) + '</div>';
+  html += '</div></div>';
+  if (recession > 0) {
+    html += '<div class="alert alert-warning py-1 small mb-0">⚠ 침체 패널티 -' + recession + '점 차감 (원점수: ' + baseScore + '점)</div>';
+  }
+  html += '</div>';
+
+  html += '<div class="row g-3 mb-3">';
+  html += '<div class="col-md-4"><div class="card p-3 h-100 border-danger border-opacity-25">';
+  html += '<div class="small fw-bold text-danger mb-1">🔴 시장 공포 점수 &nbsp;' + fear + '/100</div>';
+  html += progressBar(fear, 100, "#e74c3c");
+  html += '<div class="small text-muted mt-2">' + fearDesc(fear) + '</div>';
+  html += '</div></div>';
+
+  html += '<div class="col-md-4"><div class="card p-3 h-100 border-warning border-opacity-25">';
+  html += '<div class="small fw-bold text-warning mb-1">🟠 낙폭 점수 &nbsp;' + ddScore + '/100</div>';
+  html += progressBar(ddScore, 100, "#f39c12");
+  html += '<div class="small text-muted mt-2">' + ddDesc(athDd) + '</div>';
+  html += '</div></div>';
+
+  html += '<div class="col-md-4"><div class="card p-3 h-100 border-success border-opacity-25">';
+  html += '<div class="small fw-bold text-success mb-1">🟢 펀더멘탈 ' +
+    (fundScore != null ? fundScore + '/100' : 'ETF') + '</div>';
+  if (fundScore != null) html += progressBar(fundScore, 100, "#27ae60");
+  html += '<div class="small text-muted mt-2">' + fundDesc(fundScore, buyRatio, fpe, roe, peg, fcf) + '</div>';
+  html += '</div></div>';
+  html += '</div>';
+
+  html += '<div class="card p-3 mb-3 border-' +
+    (recession >= 25 ? "danger" : recession >= 15 ? "warning" : recession >= 5 ? "info" : "success") +
+    ' border-opacity-25">';
+  html += '<div class="small fw-bold mb-1">📊 경기침체 리스크</div>';
+  html += '<div class="small text-muted">' + recessionDesc(recession) + '</div>';
+  html += '</div>';
+
+  html += '<div class="card bg-light p-3 small">';
+  html += '<div class="fw-bold mb-1">📐 점수 계산식</div>';
+  if (isEtf) {
+    html += '<code>' + fear + ' × 0.5 + ' + ddScore + ' × 0.5 = ' + baseScore + '점</code>';
+    html += ' (ETF: 공포·낙폭만 적용)';
+  } else {
+    html += '<code>' + fear + ' × 0.3 + ' + ddScore + ' × 0.4 + ' +
+      (fundScore || 0) + ' × 0.3 = ' + baseScore + '점</code>';
+    html += ' (주식: 공포·낙폭·펀더멘탈)';
+  }
+  if (recession > 0) html += ' &nbsp;- <span class="text-danger">' + recession + '점(침체패널티)</span> = <strong>' + total + '점</strong>';
+  html += '</div>';
+
+  document.getElementById("modalBody").innerHTML = html;
+
+  /* 모달 직접 열기 */
+  var modalEl = document.getElementById("gradeModal");
+  var modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+  modal.show();
+});
+</script>
+{% if stock.price_history %}
+<script>
+(function () {
+  /* ── 차트 데이터 준비 ── */
+  var history = {{ stock.price_history | tojson }};
+  var labels  = history.map(function(d) { return d.date; });
+  var prices  = history.map(function(d) { return d.close; });
+  var volumes = history.map(function(d) { return d.volume || 0; });
+  var ma20    = history.map(function(d) { return d.ma20; });
+  var ma60    = history.map(function(d) { return d.ma60; });
+  var ma120   = history.map(function(d) { return d.ma120; });
+
+  /* x축 눈금: 월 단위로 표시 */
+  var xLabels = labels.map(function(d, i) {
+    if (i === 0) return d.slice(0, 7);
+    return labels[i].slice(5, 7) !== labels[i-1].slice(5, 7) ? d.slice(0, 7) : '';
+  });
+
+  /* ── 주가 + 이동평균 차트 ── */
+  new Chart(document.getElementById('priceChart'), {
+    type: 'line',
+    data: {
+      labels: xLabels,
+      datasets: [
+        {
+          /* 종가 (메인 라인 + 배경 채우기) */
+          label: '종가',
+          data: prices,
+          borderColor: '#3498db',
+          backgroundColor: 'rgba(52,152,219,0.07)',
+          borderWidth: 1.5,
+          pointRadius: 0,
+          fill: true,
+          tension: 0.2,
+          order: 4,
+        },
+        {
+          /* 20일 이동평균 */
+          label: 'MA20',
+          data: ma20,
+          borderColor: '#e67e22',
+          borderWidth: 1.2,
+          pointRadius: 0,
+          fill: false,
+          tension: 0.2,
+          order: 3,
+        },
+        {
+          /* 60일 이동평균 */
+          label: 'MA60',
+          data: ma60,
+          borderColor: '#9b59b6',
+          borderWidth: 1.2,
+          pointRadius: 0,
+          fill: false,
+          tension: 0.2,
+          order: 2,
+        },
+        {
+          /* 120일 이동평균 */
+          label: 'MA120',
+          data: ma120,
+          borderColor: '#e74c3c',
+          borderWidth: 1.5,
+          pointRadius: 0,
+          fill: false,
+          tension: 0.2,
+          order: 1,
+        },
+      ]
+    },
+    options: {
+      responsive: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            /* 툴팁에서 null 값 제외 */
+            label: function(ctx) {
+              if (ctx.parsed.y === null) return null;
+              return ctx.dataset.label + ': $' + ctx.parsed.y.toFixed(2);
+            }
+          }
+        }
+      },
+      scales: {
+        x: { ticks: { maxTicksLimit: 8, maxRotation: 0 } },
+        y: { ticks: { callback: function(v) { return '$' + v; } } }
+      }
+    }
+  });
+
+  /* ── 거래량 차트 ── */
+  /* 거래량이 평균 대비 2배 이상이면 강조색 */
+  var avgVol = volumes.reduce(function(a, b) { return a + b; }, 0) / volumes.length;
+  var volColors = volumes.map(function(v) {
+    return v >= avgVol * 2
+      ? 'rgba(231,76,60,0.7)'    /* 급등 거래량: 빨강 */
+      : 'rgba(52,152,219,0.5)';  /* 보통 거래량: 파랑 */
+  });
+
+  new Chart(document.getElementById('volumeChart'), {
+    type: 'bar',
+    data: {
+      labels: xLabels,
+      datasets: [{
+        label: '거래량',
+        data: volumes,
+        backgroundColor: volColors,
+        borderWidth: 0,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { maxTicksLimit: 8, maxRotation: 0 } },
+        y: {
+          ticks: {
+            /* 거래량 단위: M(백만) / B(십억) */
+            callback: function(v) {
+              if (v >= 1e9) return (v / 1e9).toFixed(1) + 'B';
+              if (v >= 1e6) return (v / 1e6).toFixed(0) + 'M';
+              return v;
+            }
+          }
+        }
+      }
+    }
+  });
+
+  /* ── 실시간 가격 AJAX 갱신 (10초 주기) ── */
+  var TICKER = '{{ stock.ticker }}';
+
+  function fetchPrice() {
+    fetch('/api/prices')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var item = data[TICKER];
+        if (!item || !item.price) return;
+
+        var priceEl  = document.getElementById('detailPrice');
+        var changeEl = document.getElementById('detailChange');
+        var updEl    = document.getElementById('detailUpdatedAt');
+
+        if (!priceEl) return;
+
+        var oldPrice = parseFloat(priceEl.dataset.price || 0);
+        var newPrice = item.price;
+
+        /* 가격 변경 시 업데이트 + 배경 플래시 */
+        if (Math.abs(newPrice - oldPrice) >= 0.01) {
+          priceEl.dataset.price = newPrice;
+          priceEl.textContent = '$' + newPrice.toFixed(2);
+
+          /* 방향 색상 (일시적으로) */
+          priceEl.style.transition = 'color 0.3s';
+          priceEl.style.color = newPrice > oldPrice ? '#27ae60' : '#e74c3c';
+          setTimeout(function() { priceEl.style.color = ''; }, 2000);
+        }
+
+        /* 전일 대비 변동률 표시 */
+        if (changeEl && item.change_pct !== null) {
+          var sign  = item.change_pct >= 0 ? '+' : '';
+          changeEl.textContent = '(' + sign + item.change_pct + '%)';
+          changeEl.className = 'small ' + (item.change_pct >= 0 ? 'text-success' : 'text-danger');
+        }
+
+        /* 마지막 갱신 시각 */
+        if (updEl) {
+          updEl.textContent = new Date().toLocaleTimeString('ko-KR') + ' 갱신';
+        }
+      })
+      .catch(function() {});
+  }
+
+  /* 페이지 진입 즉시 + 이후 10초마다 갱신 */
+  fetchPrice();
+  setInterval(fetchPrice, 10000);
+})();
+</script>
+{% endif %}
+{% endblock %}

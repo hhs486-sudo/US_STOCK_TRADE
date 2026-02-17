@@ -1,0 +1,642 @@
+{% extends "base.html" %}
+{% block title %}대시보드 — 미국주식 추천{% endblock %}
+
+{% block content %}
+
+<!-- 시장 심리 지표 -->
+<div class="row g-3 mb-4">
+  <div class="col-12"><h5 class="text-muted mb-1">시장 심리 지표</h5></div>
+
+  <!-- Fear & Greed -->
+  <div class="col-6 col-md-2">
+    <div class="card h-100 text-center p-3">
+      <div class="text-muted small"
+        data-bs-toggle="tooltip"
+        data-bs-html="true"
+        data-bs-title="CNN 투자심리 지수.<br>0=극도공포(매수기회),<br>100=극도탐욕(과열).<br>25이하 → 공포 점수 최대">
+        Fear & Greed ℹ
+      </div>
+      {% if fear_greed.value is not none %}
+        <div class="display-5 fw-bold mt-1" style="color:{{ fear_greed.color }}">
+          {{ fear_greed.value }}
+        </div>
+        <div class="badge mt-1" style="background:{{ fear_greed.color }}">
+          {{ fear_greed.label }}
+        </div>
+        {% if fear_greed.prev_1w %}
+          <div class="text-muted mt-1" style="font-size:0.72rem">
+            1주전 {{ fear_greed.prev_1w }} / 1달전 {{ fear_greed.prev_1m }}
+          </div>
+        {% endif %}
+        <div class="text-muted" style="font-size:0.68rem">{{ fear_greed.source }}</div>
+      {% else %}
+        <div class="text-muted mt-2">N/A</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- VIX -->
+  <div class="col-6 col-md-2">
+    <div class="card h-100 text-center p-3">
+      <div class="text-muted small"
+        data-bs-toggle="tooltip"
+        data-bs-html="true"
+        data-bs-title="시장 변동성 지수.<br>20↑ 불안,<br>30↑ 공포,<br>40↑ 극도공포. 높을수록 매수 기회 가능">
+        VIX 지수 ℹ
+      </div>
+      {% if vix.current is not none %}
+        <div class="display-5 fw-bold mt-1
+          {% if vix.level == 'extreme' %}text-danger
+          {% elif vix.level == 'high' %}text-warning
+          {% else %}text-success{% endif %}">
+          {{ vix.current }}
+        </div>
+        <div class="small text-muted">
+          {{ vix.change_pct }}%
+          {% if vix.level == 'extreme' %}🔴 극도 공포
+          {% elif vix.level == 'high' %}🟠 높음
+          {% elif vix.level == 'normal' %}🟡 보통
+          {% else %}🟢 낮음{% endif %}
+        </div>
+      {% else %}
+        <div class="text-muted mt-2">N/A</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Market RSI -->
+  <div class="col-6 col-md-2">
+    <div class="card h-100 text-center p-3">
+      <div class="text-muted small"
+        data-bs-toggle="tooltip"
+        data-bs-html="true"
+        data-bs-title="14일 상대강도지수.<br>30이하=과매도(매수기회),<br>70이상=과매수(과열). S&amp;P500 기준 적용">
+        지수 RSI(14) ℹ
+      </div>
+      {% set sp = market_rsi.sp500 %}
+      {% set nq = market_rsi.nasdaq %}
+      {% if sp.rsi is not none %}
+        <div class="mt-1">
+          <span class="text-muted small">S&amp;P500</span>
+          <span class="fw-bold ms-1
+            {% if sp.level == 'oversold' %}text-danger
+            {% elif sp.level == 'overbought' %}text-success
+            {% else %}text-warning{% endif %}">
+            {{ sp.rsi }}
+          </span>
+        </div>
+        <div>
+          <span class="text-muted small">NASDAQ</span>
+          <span class="fw-bold ms-1
+            {% if nq.level == 'oversold' %}text-danger
+            {% elif nq.level == 'overbought' %}text-success
+            {% else %}text-warning{% endif %}">
+            {{ nq.rsi if nq.rsi else 'N/A' }}
+          </span>
+        </div>
+        {% if sp.level == 'oversold' %}
+          <div class="badge bg-danger mt-1">과매도</div>
+        {% elif sp.level == 'overbought' %}
+          <div class="badge bg-success mt-1">과매수</div>
+        {% else %}
+          <div class="badge bg-secondary mt-1">중립</div>
+        {% endif %}
+      {% else %}
+        <div class="text-muted mt-2">N/A</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- CPI -->
+  <div class="col-6 col-md-2">
+    <div class="card h-100 text-center p-3">
+      <div class="text-muted small"
+        data-bs-toggle="tooltip"
+        data-bs-html="true"
+        data-bs-title="소비자물가 상승률(YoY).<br>연준 목표 2%.<br>높을수록 금리 인상 압력 → 증시 부담">
+        CPI (YoY) ℹ
+      </div>
+      {% if cpi.available %}
+        <div class="display-5 fw-bold mt-1
+          {% if cpi.latest_value and cpi.latest_value > 4 %}text-danger
+          {% elif cpi.latest_value and cpi.latest_value > 2.5 %}text-warning
+          {% else %}text-success{% endif %}">
+          {{ cpi.latest_value }}%
+        </div>
+        <div class="small text-muted">
+          {{ cpi.latest_date }}
+          {% if cpi.trend == 'down' %}↓ 하락{% elif cpi.trend == 'up' %}↑ 상승{% else %}→ 보합{% endif %}
+        </div>
+      {% else %}
+        <div class="text-muted mt-2 small">
+          {% if cpi.reason == 'FRED_API_KEY not set' %}FRED API 키 미설정
+          {% else %}N/A{% endif %}
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- 장단기 금리차 -->
+  <div class="col-6 col-md-2">
+    <div class="card h-100 text-center p-3">
+      <div class="text-muted small"
+        data-bs-toggle="tooltip"
+        data-bs-html="true"
+        data-bs-title="10년물-2년물 금리차.<br>음수(-) 역전 시 6~18개월 내 경기침체 역사적 선행지표">
+        장단기 금리차 ℹ
+      </div>
+      {% if yield_curve.available %}
+        <div class="display-5 fw-bold mt-1
+          {% if yield_curve.status == 'deeply_inverted' %}text-danger
+          {% elif yield_curve.status == 'inverted' %}text-warning
+          {% elif yield_curve.status == 'flat' %}text-info
+          {% else %}text-success{% endif %}">
+          {{ '%+.2f'|format(yield_curve.spread) }}%
+        </div>
+        <div class="small text-muted">{{ yield_curve.status_label }}</div>
+        <div class="text-muted" style="font-size:0.68rem">
+          10Y {{ yield_curve.rate_10y }}% / 2Y {{ yield_curve.rate_2y }}%
+        </div>
+      {% else %}
+        <div class="text-muted mt-2 small">N/A</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- 공포 종합 점수 -->
+<div class="card mb-4 p-3">
+  <div class="d-flex align-items-center gap-3">
+    <div>
+      <div class="text-muted small">시장 공포 종합 점수</div>
+      <div class="fw-bold fs-4
+        {% if fear_score >= 60 %}text-danger
+        {% elif fear_score >= 40 %}text-warning
+        {% else %}text-success{% endif %}">
+        {{ fear_score }} / 100
+      </div>
+    </div>
+    <div class="flex-grow-1">
+      <div class="progress" style="height:14px">
+        <div class="progress-bar
+          {% if fear_score >= 70 %}bg-danger
+          {% elif fear_score >= 50 %}bg-warning
+          {% elif fear_score >= 30 %}bg-info
+          {% else %}bg-success{% endif %}"
+          style="width:{{ fear_score }}%"></div>
+      </div>
+    </div>
+    <div class="text-muted small">
+      {% if fear_score >= 70 %}🔴 강력 매수 기회
+      {% elif fear_score >= 50 %}🟠 매수 고려 구간
+      {% elif fear_score >= 30 %}🔵 주의 구간
+      {% else %}🟢 안정 구간{% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Watchlist 추천 순위 -->
+<div class="d-flex justify-content-between align-items-center mb-2">
+  <h5 class="mb-0">관심 종목 추천 순위</h5>
+  <div class="d-flex align-items-center gap-2">
+    <!-- 가격 갱신 상태 표시 -->
+    <span id="priceUpdateBadge" class="badge bg-secondary" style="font-size:0.72rem"></span>
+    <a href="/watchlist" class="btn btn-outline-secondary btn-sm">+ 종목 추가</a>
+  </div>
+</div>
+
+{% if not stocks %}
+  <div class="alert alert-info">
+    등록된 종목이 없습니다. <a href="/watchlist">Watchlist</a>에서 종목을 추가하세요.
+  </div>
+{% else %}
+  <div class="table-responsive">
+    <table class="table table-hover align-middle">
+      <thead class="table-dark">
+        <tr>
+          <th>순위</th>
+          <th>종목</th>
+          <th>현재가</th>
+          <th>ATH 대비 낙폭</th>
+          <th>Buy 비율</th>
+          <th>목표가 Upside</th>
+          <th>추천 점수</th>
+          <th>등급</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in stocks %}
+        <tr data-ticker="{{ s.ticker }}">
+          <td class="text-muted">{{ loop.index }}</td>
+          <td>
+            <a href="/stock/{{ s.ticker }}" class="fw-bold text-decoration-none">{{ s.ticker }}</a>
+            <div class="text-muted small">{{ s.name[:30] if s.name else '' }}</div>
+          </td>
+          <td>
+            {% if s.current_price %}
+              <!-- data-price: JS에서 변동 감지용 기준값 -->
+              <span class="price-cell fw-bold" data-ticker="{{ s.ticker }}" data-price="{{ s.current_price }}">
+                ${{ "%.2f"|format(s.current_price) }}
+              </span>
+              <!-- 전일 대비 변동률 표시 (JS가 채워줌) -->
+              <span class="change-cell small" data-ticker="{{ s.ticker }}"></span>
+            {% else %}
+              <span class="text-muted">N/A</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if s.ath_drawdown_pct is not none %}
+              <span class="drawdown-cell
+                {% if s.ath_drawdown_pct <= -30 %}text-danger fw-bold
+                {% elif s.ath_drawdown_pct <= -15 %}text-warning
+                {% else %}text-muted{% endif %}"
+                data-ticker="{{ s.ticker }}"
+                data-drawdown="{{ s.ath_drawdown_pct }}">
+                {{ s.ath_drawdown_pct }}%
+              </span>
+            {% else %}
+              <span class="text-muted">N/A</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if s.is_etf %}
+              <span class="badge bg-info text-dark">ETF</span>
+            {% elif s.buy_ratio_pct is not none %}
+              <span class="{% if s.buy_ratio_pct >= 70 %}text-success{% elif s.buy_ratio_pct >= 50 %}text-warning{% else %}text-danger{% endif %}">
+                {{ s.buy_ratio_pct }}%
+              </span>
+            {% else %}
+              <span class="text-muted">N/A</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if s.target_upside_pct is not none %}
+              <span class="{% if s.target_upside_pct > 0 %}text-success{% else %}text-danger{% endif %}">
+                {{ '+' if s.target_upside_pct > 0 else '' }}{{ s.target_upside_pct }}%
+              </span>
+            {% else %}
+              <span class="text-muted">N/A</span>
+            {% endif %}
+          </td>
+          <td class="fw-bold">{{ s.total_score }}</td>
+          <td>
+            <!-- 등급 배지 클릭 시 상세 분석 팝업 -->
+            <span class="badge grade-badge"
+              style="background:{{ s.grade_color }}; cursor:pointer"
+              data-ticker="{{ s.ticker }}"
+              data-name="{{ s.name }}"
+              data-total="{{ s.total_score }}"
+              data-grade="{{ s.grade }}"
+              data-grade-color="{{ s.grade_color }}"
+              data-fear="{{ s.fear_score }}"
+              data-drawdown-score="{{ s.drawdown_score }}"
+              data-fundamental="{{ s.fundamental_score if s.fundamental_score is not none else '' }}"
+              data-recession="{{ s.recession_penalty if s.recession_penalty is defined else 0 }}"
+              data-ath-drawdown="{{ s.ath_drawdown_pct }}"
+              data-buy-ratio="{{ s.buy_ratio_pct if s.buy_ratio_pct is not none else '' }}"
+              data-forward-pe="{{ s.forward_pe if s.forward_pe is not none else '' }}"
+              data-roe="{{ s.roe if (s.roe is defined and s.roe is not none) else '' }}"
+              data-peg="{{ s.peg if (s.peg is defined and s.peg is not none) else '' }}"
+              data-fcf="{{ '양호' if s.fcf_positive else '부족' }}"
+              data-is-etf="{{ 'true' if s.is_etf else 'false' }}"
+              data-reason="{{ s.reason }}">
+              {{ s.grade }}
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endif %}
+
+<div class="d-flex justify-content-between align-items-center mt-2">
+  <div class="text-muted small">
+    ※ 본 정보는 투자 의사결정 참고용이며, 투자 손익에 대한 책임은 투자자 본인에게 있습니다.
+  </div>
+  <div class="text-muted small" id="lastUpdatedText"></div>
+</div>
+
+<!-- ── 등급 상세 분석 모달 ── -->
+<div class="modal fade" id="gradeModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header" id="modalHeader">
+        <h5 class="modal-title" id="modalTitle">종목 분석</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="modalBody">
+        <!-- JS가 채워줌 -->
+      </div>
+      <div class="modal-footer">
+        <small class="text-muted me-auto">※ 규칙 기반 점수로 투자 결정의 참고 자료입니다.</small>
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">닫기</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* ── Bootstrap 툴팁 초기화 ── */
+document.addEventListener("DOMContentLoaded", function () {
+  document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function (el) {
+    new bootstrap.Tooltip(el, { placement: "bottom", trigger: "hover", html: true, sanitize: false });
+  });
+});
+
+/* ── 등급 배지 클릭 → 모달 상세 분석 ── */
+document.addEventListener("click", function (e) {
+  var badge = e.target.closest(".grade-badge");
+  if (!badge) return;
+
+  /* 배지에서 데이터 추출 */
+  var ticker      = badge.dataset.ticker;
+  var name        = badge.dataset.name;
+  var total       = parseInt(badge.dataset.total);
+  var grade       = badge.dataset.grade;
+  var gradeColor  = badge.dataset.gradeColor;
+  var fear        = parseInt(badge.dataset.fear);
+  var ddScore     = parseInt(badge.dataset.drawdownScore);
+  var fundScore   = badge.dataset.fundamental !== "" ? parseInt(badge.dataset.fundamental) : null;
+  var recession   = parseInt(badge.dataset.recession || "0");
+  var athDd       = parseFloat(badge.dataset.athDrawdown);
+  var buyRatio    = badge.dataset.buyRatio !== "" ? parseFloat(badge.dataset.buyRatio) : null;
+  var fpe         = badge.dataset.forwardPe !== "" ? parseFloat(badge.dataset.forwardPe) : null;
+  var roe         = badge.dataset.roe !== "" ? parseFloat(badge.dataset.roe) : null;
+  var peg         = badge.dataset.peg !== "" ? parseFloat(badge.dataset.peg) : null;
+  var fcf         = badge.dataset.fcf;
+  var isEtf       = badge.dataset.isEtf === "true";
+  var reason      = badge.dataset.reason;
+
+  /* 모달 헤더 설정 */
+  document.getElementById("modalHeader").style.background = gradeColor + "22";
+  document.getElementById("modalTitle").innerHTML =
+    ticker + " <small class='text-muted'>" + name.substring(0, 30) + "</small>" +
+    " &nbsp;<span class='badge' style='background:" + gradeColor + "'>" + grade + "</span>";
+
+  /* ── 점수 해석 함수 ── */
+  function fearDesc(s) {
+    if (s >= 70) return "시장 극도 공포 — 역사적 저점 근처 가능성이 높습니다.";
+    if (s >= 50) return "시장 불안·하락 — 공포 분위기가 퍼져 있는 상태입니다.";
+    if (s >= 30) return "다소 불안 — 하락 압력이 있으나 아직 공포 수준은 아닙니다.";
+    return "시장 안정·탐욕 상태 — 매수 타이밍으로는 불리합니다.";
+  }
+  function ddDesc(d) {
+    if (d == null) return "낙폭 데이터 없음";
+    var pct = Math.abs(d);
+    if (pct >= 50) return "ATH 대비 " + d + "% — 반토막 수준, 강력한 매수 구간";
+    if (pct >= 30) return "ATH 대비 " + d + "% — 큰 조정, 매수 적극 검토 구간";
+    if (pct >= 20) return "ATH 대비 " + d + "% — 중간 조정, 매수 고려 가능";
+    if (pct >= 10) return "ATH 대비 " + d + "% — 소폭 조정, 충분한 하락 아님";
+    return "ATH 대비 " + d + "% — 고점 근처, 매수 주의";
+  }
+  function fundDesc(score, buy, pe, roe, peg, fcf) {
+    if (score == null) return "ETF — 펀더멘탈 평가 제외 (Fear + 낙폭만 적용)";
+    var parts = [];
+    if (buy != null)  parts.push("Buy비율 " + buy + "%" + (buy >= 70 ? " ✓" : ""));
+    if (pe  != null)  parts.push("Forward PE " + pe + (pe < 20 ? " ✓" : pe > 30 ? " ✗" : ""));
+    if (roe != null)  parts.push("ROE " + roe + "%" + (roe >= 15 ? " ✓" : ""));
+    if (peg != null)  parts.push("PEG " + peg + (peg < 1 ? " ✓저평가" : peg > 2 ? " ✗고평가" : ""));
+    if (fcf)          parts.push("FCF " + fcf + (fcf === "양호" ? " ✓" : " ✗"));
+    return parts.length ? parts.join(" &nbsp;|&nbsp; ") : "데이터 부족";
+  }
+  function recessionDesc(penalty) {
+    if (penalty >= 25) return "장단기 금리차 심각 역전 — 경기침체 강한 경고 신호 (-25점 반영)";
+    if (penalty >= 15) return "장단기 금리차 역전 — 침체 선행지표 발동 (-15점 반영)";
+    if (penalty >= 5)  return "장단기 금리차 플랫화 — 경기 둔화 주의 (-5점 반영)";
+    return "장단기 금리차 정상 — 침체 패널티 없음";
+  }
+  function gradeDesc(g) {
+    if (g.includes("강력")) return "시장 공포 + 큰 낙폭 + 우수한 펀더멘탈이 동시에 충족된 최적 매수 타이밍입니다. 분할 매수를 적극 고려하세요.";
+    if (g.includes("매수 고려")) return "일부 조건이 충족된 매수 고려 구간입니다. 추가 하락 가능성을 고려해 소량부터 분할 접근을 권장합니다.";
+    if (g.includes("관망")) return "매수 조건이 부분적으로만 충족됩니다. 시장 상황을 더 지켜보거나 하락 시 준비하는 단계입니다.";
+    return "현재 매수 조건이 불충분합니다. 시장 안정 또는 가격 조정을 기다리는 것을 권장합니다.";
+  }
+
+  /* 점수 진행바 HTML */
+  function progressBar(score, max, color) {
+    var pct = max > 0 ? Math.round(score / max * 100) : 0;
+    return '<div class="progress" style="height:10px"><div class="progress-bar" style="width:' +
+      pct + '%;background:' + color + '">' + score + '/' + max + '</div></div>';
+  }
+
+  /* ── 모달 본문 구성 ── */
+  var baseScore = total + recession;  /* 패널티 전 점수 */
+  var html = '';
+
+  /* 종합 점수 */
+  html += '<div class="mb-4">';
+  html += '<div class="d-flex align-items-center gap-3 mb-2">';
+  html += '<div class="text-center" style="min-width:80px">';
+  html += '<div class="display-4 fw-bold" style="color:' + gradeColor + '">' + total + '</div>';
+  html += '<div class="small text-muted">/ 100점</div></div>';
+  html += '<div class="flex-grow-1">';
+  html += progressBar(total, 100, gradeColor);
+  html += '<div class="mt-2 small">' + gradeDesc(grade) + '</div>';
+  html += '</div></div>';
+  if (recession > 0) {
+    html += '<div class="alert alert-warning py-1 small mb-0">⚠ 침체 패널티 -' + recession + '점 차감 (원점수: ' + baseScore + '점)</div>';
+  }
+  html += '</div>';
+
+  /* 점수 구성 3개 카드 */
+  html += '<div class="row g-3 mb-3">';
+
+  /* 시장 공포 점수 */
+  html += '<div class="col-md-4"><div class="card p-3 h-100 border-danger border-opacity-25">';
+  html += '<div class="small fw-bold text-danger mb-1">🔴 시장 공포 점수 &nbsp;' + fear + '/100</div>';
+  html += progressBar(fear, 100, "#e74c3c");
+  html += '<div class="small text-muted mt-2">' + fearDesc(fear) + '</div>';
+  html += '</div></div>';
+
+  /* 낙폭 점수 */
+  html += '<div class="col-md-4"><div class="card p-3 h-100 border-warning border-opacity-25">';
+  html += '<div class="small fw-bold text-warning mb-1">🟠 낙폭 점수 &nbsp;' + ddScore + '/100</div>';
+  html += progressBar(ddScore, 100, "#f39c12");
+  html += '<div class="small text-muted mt-2">' + ddDesc(athDd) + '</div>';
+  html += '</div></div>';
+
+  /* 펀더멘탈 점수 */
+  html += '<div class="col-md-4"><div class="card p-3 h-100 border-success border-opacity-25">';
+  html += '<div class="small fw-bold text-success mb-1">🟢 펀더멘탈 ' +
+    (fundScore != null ? fundScore + '/100' : 'ETF') + '</div>';
+  if (fundScore != null) progressBar(fundScore, 100, "#27ae60");
+  html += '<div class="small text-muted mt-2">' + fundDesc(fundScore, buyRatio, fpe, roe, peg, fcf) + '</div>';
+  html += '</div></div>';
+
+  html += '</div>';
+
+  /* 침체 리스크 */
+  html += '<div class="card p-3 mb-3 border-' +
+    (recession >= 25 ? "danger" : recession >= 15 ? "warning" : recession >= 5 ? "info" : "success") +
+    ' border-opacity-25">';
+  html += '<div class="small fw-bold mb-1">📊 경기침체 리스크</div>';
+  html += '<div class="small text-muted">' + recessionDesc(recession) + '</div>';
+  html += '</div>';
+
+  /* 점수 계산식 */
+  html += '<div class="card bg-light p-3 small">';
+  html += '<div class="fw-bold mb-1">📐 점수 계산식</div>';
+  if (isEtf) {
+    html += '<code>' + fear + ' × 0.5 + ' + ddScore + ' × 0.5 = ' + (baseScore) + '점</code>';
+    html += ' (ETF: 공포·낙폭만 적용)';
+  } else {
+    html += '<code>' + fear + ' × 0.3 + ' + ddScore + ' × 0.4 + ' +
+      (fundScore || 0) + ' × 0.3 = ' + baseScore + '점</code>';
+    html += ' (주식: 공포·낙폭·펀더멘탈)';
+  }
+  if (recession > 0) html += ' &nbsp;- <span class="text-danger">' + recession + '점(침체패널티)</span> = <strong>' + total + '점</strong>';
+  html += '</div>';
+
+  document.getElementById("modalBody").innerHTML = html;
+
+  /* 모달 직접 열기 */
+  var modalEl = document.getElementById("gradeModal");
+  var modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+  modal.show();
+});
+</script>
+<style>
+/* 가격 갱신 시 플래시 애니메이션 */
+@keyframes flashGreen {
+  0%   { background-color: rgba(40,167,69,0.4); }
+  100% { background-color: transparent; }
+}
+@keyframes flashRed {
+  0%   { background-color: rgba(220,53,69,0.4); }
+  100% { background-color: transparent; }
+}
+.flash-up   { animation: flashGreen 1.2s ease-out; }
+.flash-down { animation: flashRed   1.2s ease-out; }
+</style>
+
+<script>
+(function () {
+  /* ── 설정 ── */
+  var PRICE_INTERVAL  = 10;   // 현재가 AJAX 갱신 주기 (초)
+  var PAGE_INTERVAL   = 300;  // 전체 페이지 갱신 주기 (초, 시장심리지표 갱신용)
+
+  var priceRemaining = PRICE_INTERVAL;
+  var pageRemaining  = PAGE_INTERVAL;
+
+  var badge       = document.getElementById("autoRefreshBadge");
+  var countdown   = document.getElementById("countdown");
+  var priceBadge  = document.getElementById("priceUpdateBadge");
+  var lastUpdated = document.getElementById("lastUpdatedText");
+
+  if (badge) badge.style.display = "inline-block";
+
+  /* 현재 시각 문자열 */
+  function nowStr() { return new Date().toLocaleTimeString("ko-KR"); }
+
+  /* 페이지 최초 진입 시 즉시 가격 갱신 */
+  fetchPrices();
+
+  /* ── 1초 메인 타이머 ── */
+  setInterval(function () {
+    priceRemaining--;
+    pageRemaining--;
+
+    /* 네비바 카운트다운: 전체 페이지 갱신 기준 */
+    if (countdown) countdown.textContent = pageRemaining;
+    if (badge) {
+      badge.className = pageRemaining <= 30
+        ? "badge bg-warning text-dark"
+        : "badge bg-secondary";
+    }
+
+    /* 10초마다 현재가 AJAX 갱신 */
+    if (priceRemaining <= 0) {
+      priceRemaining = PRICE_INTERVAL;
+      fetchPrices();
+    }
+
+    /* 5분마다 전체 페이지 재로드 (시장심리지표 갱신) */
+    if (pageRemaining <= 0) {
+      location.reload();
+    }
+  }, 1000);
+
+  /* ── 현재가 AJAX 갱신 함수 ── */
+  function fetchPrices() {
+    fetch("/api/prices")
+      .then(function(r) { return r.json(); })
+      .then(function(data) { updatePrices(data); })
+      .catch(function() {
+        if (priceBadge) priceBadge.textContent = "⚠ 가격 조회 실패";
+      });
+  }
+
+  /* ── 테이블 가격 셀 업데이트 ── */
+  function updatePrices(data) {
+    var updatedCount = 0;
+
+    Object.keys(data).forEach(function(ticker) {
+      var item = data[ticker];
+      if (!item || !item.price) return;
+
+      var newPrice = item.price;
+      var changePct = item.change_pct;
+
+      /* 가격 셀 업데이트 */
+      var priceEl = document.querySelector(".price-cell[data-ticker='" + ticker + "']");
+      if (priceEl) {
+        var oldPrice = parseFloat(priceEl.dataset.price || 0);
+
+        /* 가격이 변경된 경우만 업데이트 + 애니메이션 */
+        if (Math.abs(newPrice - oldPrice) >= 0.01) {
+          priceEl.dataset.price = newPrice;
+          priceEl.textContent = "$" + newPrice.toFixed(2);
+
+          /* 방향에 따라 색상 애니메이션 */
+          priceEl.classList.remove("flash-up", "flash-down");
+          void priceEl.offsetWidth; /* reflow 강제 (애니메이션 재시작) */
+          priceEl.classList.add(newPrice > oldPrice ? "flash-up" : "flash-down");
+          updatedCount++;
+        }
+
+        /* 전일 대비 변동률 표시 */
+        var changeEl = document.querySelector(".change-cell[data-ticker='" + ticker + "']");
+        if (changeEl && changePct !== null && changePct !== undefined) {
+          var sign   = changePct >= 0 ? "+" : "";
+          var color  = changePct >= 0 ? "text-success" : "text-danger";
+          changeEl.className = "change-cell small " + color;
+          changeEl.textContent = "(" + sign + changePct + "%)";
+        }
+      }
+
+      /* ATH 낙폭 재계산 및 업데이트 */
+      var drawdownEl = document.querySelector(".drawdown-cell[data-ticker='" + ticker + "']");
+      if (drawdownEl) {
+        var athAttr = drawdownEl.closest("tr") &&
+                      drawdownEl.closest("tr").querySelector("[data-ath]");
+        /* ATH는 페이지 로드 시 data-ath 속성으로 가져옴 */
+      }
+    });
+
+    /* 갱신 배지 업데이트 */
+    if (priceBadge) {
+      if (updatedCount > 0) {
+        priceBadge.className = "badge bg-success";
+        priceBadge.textContent = "✓ " + nowStr() + " 갱신 (" + updatedCount + "종목)";
+      } else {
+        priceBadge.className = "badge bg-secondary";
+        priceBadge.textContent = "✓ " + nowStr() + " 확인 (변동없음)";
+      }
+    }
+
+    if (lastUpdated) {
+      lastUpdated.textContent = "마지막 갱신: " + nowStr();
+    }
+  }
+
+  /* ── 탭 복귀 시 즉시 가격 갱신 ── */
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) fetchPrices();
+  });
+})();
+</script>
+{% endblock %}

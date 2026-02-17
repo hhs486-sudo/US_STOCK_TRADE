@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+{% block title %}Watchlist 관리 — 미국주식 추천{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 class="mb-0">Watchlist 관리</h5>
+  <a href="/" class="btn btn-outline-secondary btn-sm">← 대시보드로</a>
+</div>
+
+<!-- 종목 추가 폼 -->
+<div class="card p-3 mb-4">
+  <div class="small text-muted mb-2">종목 추가</div>
+
+  <!-- 키워드 검색 영역 (티커 직접 입력 대체) -->
+  <div class="mb-2 position-relative" style="max-width:400px">
+    <label class="form-label small mb-1">종목 검색 <span class="text-muted">(티커 또는 회사명)</span></label>
+    <input type="text" id="searchInput" class="form-control form-control-sm"
+      placeholder="예: Apple, AAPL, S&P500, QQQ" autocomplete="off">
+
+    <!-- 검색 결과 드롭다운 -->
+    <ul id="searchDropdown"
+      class="list-group position-absolute w-100 shadow"
+      style="z-index:1000; display:none; max-height:240px; overflow-y:auto; top:100%">
+    </ul>
+  </div>
+
+  <!-- 실제 제출 폼 (검색으로 자동 채워짐, 직접 입력도 가능) -->
+  <form method="POST" action="/watchlist/add" class="row g-2 align-items-end">
+    <div class="col-auto">
+      <label class="form-label small mb-1">티커 코드</label>
+      <input type="text" id="tickerInput" name="ticker" class="form-control form-control-sm"
+        placeholder="예: AAPL" style="width:130px" required>
+    </div>
+    <div class="col-auto">
+      <label class="form-label small mb-1">유형</label>
+      <select id="assetTypeSelect" name="asset_type" class="form-select form-select-sm" style="width:100px">
+        <option value="stock">Stock</option>
+        <option value="etf">ETF</option>
+      </select>
+    </div>
+    <div class="col">
+      <label class="form-label small mb-1">메모 (선택)</label>
+      <input type="text" name="memo" class="form-control form-control-sm" placeholder="예: 장기 보유">
+    </div>
+    <div class="col-auto">
+      <button type="submit" class="btn btn-primary btn-sm">추가</button>
+    </div>
+  </form>
+</div>
+
+<!-- 키워드 검색 JavaScript -->
+<script>
+(function () {
+  const searchInput   = document.getElementById("searchInput");
+  const dropdown      = document.getElementById("searchDropdown");
+  const tickerInput   = document.getElementById("tickerInput");
+  const assetTypeSelect = document.getElementById("assetTypeSelect");
+
+  let debounceTimer = null;  // 입력 딜레이 타이머
+
+  // 검색 입력 이벤트: 300ms 딜레이 후 API 호출 (과도한 요청 방지)
+  searchInput.addEventListener("input", function () {
+    const q = this.value.trim();
+    clearTimeout(debounceTimer);
+
+    if (q.length < 1) {
+      hideDropdown();
+      return;
+    }
+
+    // 300ms 후 검색 실행 (타이핑 중 불필요한 요청 방지)
+    debounceTimer = setTimeout(() => fetchSearch(q), 300);
+  });
+
+  // Yahoo Finance 검색 API 호출
+  function fetchSearch(q) {
+    fetch("/api/search?q=" + encodeURIComponent(q))
+      .then(r => r.json())
+      .then(results => renderDropdown(results))
+      .catch(() => hideDropdown());
+  }
+
+  // 검색 결과를 드롭다운으로 표시
+  function renderDropdown(results) {
+    dropdown.innerHTML = "";
+
+    if (results.length === 0) {
+      // 검색 결과 없을 때
+      const li = document.createElement("li");
+      li.className = "list-group-item text-muted small py-1";
+      li.textContent = "검색 결과가 없습니다.";
+      dropdown.appendChild(li);
+      dropdown.style.display = "block";
+      return;
+    }
+
+    results.forEach(function (item) {
+      const li = document.createElement("li");
+      li.className = "list-group-item list-group-item-action py-2 px-3";
+      li.style.cursor = "pointer";
+
+      // 항목 표시: 티커 (굵게) + 종목명 + 거래소 + 유형 뱃지
+      const typeBadge = item.asset_type === "etf"
+        ? '<span class="badge bg-info text-dark ms-1" style="font-size:10px">ETF</span>'
+        : '<span class="badge bg-secondary ms-1" style="font-size:10px">STOCK</span>';
+
+      li.innerHTML =
+        '<span class="fw-bold">' + item.ticker + '</span> ' +
+        typeBadge +
+        '<span class="text-muted small ms-2">' + item.name + '</span>' +
+        '<span class="text-muted small ms-1 opacity-50">(' + item.exchange + ')</span>';
+
+      // 항목 클릭 시 폼에 자동 입력
+      li.addEventListener("click", function () {
+        tickerInput.value   = item.ticker;       // 티커 자동 입력
+        assetTypeSelect.value = item.asset_type; // 유형 자동 선택
+        searchInput.value   = item.ticker + " — " + item.name;  // 검색창에 선택 결과 표시
+        hideDropdown();
+        tickerInput.focus(); // 티커 입력란으로 포커스 이동
+      });
+
+      dropdown.appendChild(li);
+    });
+
+    dropdown.style.display = "block";
+  }
+
+  // 드롭다운 숨기기
+  function hideDropdown() {
+    dropdown.style.display = "none";
+    dropdown.innerHTML = "";
+  }
+
+  // 검색창 외부 클릭 시 드롭다운 닫기
+  document.addEventListener("click", function (e) {
+    if (!searchInput.contains(e.target) && !dropdown.contains(e.target)) {
+      hideDropdown();
+    }
+  });
+
+  // ESC 키로 드롭다운 닫기
+  searchInput.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") hideDropdown();
+  });
+})();
+</script>
+
+<!-- 등록 목록 -->
+{% if items %}
+  <div class="table-responsive">
+    <table class="table table-hover align-middle">
+      <thead class="table-dark">
+        <tr>
+          <th>티커</th>
+          <th>종목명</th>
+          <th>유형</th>
+          <th>메모</th>
+          <th>등록일</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+        <tr>
+          <td>
+            <a href="/stock/{{ item.ticker }}" class="fw-bold text-decoration-none">
+              {{ item.ticker }}
+            </a>
+          </td>
+          <td class="text-muted">{{ item.name or '-' }}</td>
+          <td>
+            <span class="badge {% if item.asset_type == 'etf' %}bg-info text-dark{% else %}bg-secondary{% endif %}">
+              {{ item.asset_type | upper }}
+            </span>
+          </td>
+          <td class="text-muted small">{{ item.memo or '-' }}</td>
+          <td class="text-muted small">{{ item.added_at[:10] if item.added_at else '-' }}</td>
+          <td>
+            <form method="POST" action="/watchlist/delete"
+              onsubmit="return confirm('{{ item.ticker }} 를 삭제할까요?')">
+              <input type="hidden" name="ticker" value="{{ item.ticker }}">
+              <button type="submit" class="btn btn-outline-danger btn-sm">삭제</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <div class="alert alert-info">
+    등록된 종목이 없습니다. 위 폼에서 종목을 추가하세요.
+  </div>
+{% endif %}
+
+{% endblock %}

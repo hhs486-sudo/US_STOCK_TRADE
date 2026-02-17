@@ -1,0 +1,32 @@
+# 환경변수 (API 키 등 민감정보)
+.env
+
+# 데이터베이스 (로컬 캐시)
+data/invest.db
+
+# Python 캐시
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# 가상환경
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 로그
+*.log
+nohup.out

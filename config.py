@@ -16,7 +16,8 @@ CACHE_TTL = {
     "fear_greed": int(os.getenv("CACHE_TTL_FEAR_GREED", 3600)),
     "vix":        3600,
     "market_rsi": 3600,
-    "cpi":        86400,
-    "stock":      int(os.getenv("CACHE_TTL_STOCK", 21600)),
+    "cpi":         86400,
+    "yield_curve": 3600,
+    "stock":       int(os.getenv("CACHE_TTL_STOCK", 21600)),
     "price":      int(os.getenv("CACHE_TTL_PRICE", 10)),    # 현재가 전용: 10초 캐시 (AJAX 갱신 주기와 동일)
 }

@@ -432,8 +432,15 @@ def enrich_watchlist(tickers: list[str], fear_score: int,
 ```python
 def calc_drawdown_score(ath_drawdown_pct: float | None) -> int
     """
-    ATH 대비 낙폭 → 점수 (0~100)
+    일반 주식 ATH 대비 낙폭 → 점수 (0~100)
     ≥50%: 100점 / ≥30%: 75점 / ≥20%: 50점 / ≥10%: 25점 / <10%: 0점
+    """
+
+def calc_etf_drawdown_score(ath_drawdown_pct: float | None) -> int
+    """
+    ETF(지수추종) ATH 대비 낙폭 → 점수 (0~100)
+    지수 ETF는 낙폭이 작으므로 기준 세분화 (5~20% 구간)
+    ≥20%: 100점 / ≥15%: 75점 / ≥10%: 50점 / ≥5%: 25점 / <5%: 0점
     """
 
 def calc_fundamental_score(stock_data: dict) -> int | None

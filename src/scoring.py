@@ -1,5 +1,6 @@
 def calc_drawdown_score(ath_drawdown_pct: float | None) -> int:
-    """ATH 대비 낙폭 → 점수 (0~100)."""
+    """일반 주식 ATH 대비 낙폭 → 점수 (0~100).
+    주식은 낙폭이 크기 때문에 10~50% 구간 기준 사용."""
     if ath_drawdown_pct is None:
         return 0
     d = abs(ath_drawdown_pct)
@@ -10,6 +11,23 @@ def calc_drawdown_score(ath_drawdown_pct: float | None) -> int:
     elif d >= 20:
         return 50
     elif d >= 10:
+        return 25
+    return 0
+
+
+def calc_etf_drawdown_score(ath_drawdown_pct: float | None) -> int:
+    """ETF(지수추종) ATH 대비 낙폭 → 점수 (0~100).
+    지수 ETF는 개별 주식보다 낙폭이 작으므로 5~20% 구간 기준 사용."""
+    if ath_drawdown_pct is None:
+        return 0
+    d = abs(ath_drawdown_pct)
+    if d >= 20:
+        return 100
+    elif d >= 15:
+        return 75
+    elif d >= 10:
+        return 50
+    elif d >= 5:
         return 25
     return 0
 
@@ -81,7 +99,11 @@ def calc_recommendation_score(fear_score: int, stock_data: dict,
     장단기 금리차 역전 시 침체 패널티 차감.
     """
     is_etf = stock_data.get("is_etf", False)
-    drawdown_score    = calc_drawdown_score(stock_data.get("ath_drawdown_pct"))
+    # ETF는 지수추종 특성상 낙폭 기준이 다름 (5~20% 구간)
+    if is_etf:
+        drawdown_score = calc_etf_drawdown_score(stock_data.get("ath_drawdown_pct"))
+    else:
+        drawdown_score = calc_drawdown_score(stock_data.get("ath_drawdown_pct"))
     fundamental_score = calc_fundamental_score(stock_data)  # ETF → None
 
     if is_etf:

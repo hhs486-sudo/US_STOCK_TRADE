@@ -199,10 +199,9 @@ def api_search():
 
 @app.route("/api/refresh")
 def api_refresh():
-    """캐시 무효화 후 메인으로 리다이렉트."""
-    from src.db import get_conn
-    with get_conn() as conn:
-        conn.execute("DELETE FROM cache")
+    """L1(메모리) + L2(DB) 캐시 전체 무효화 후 메인으로 리다이렉트."""
+    from src.db import cache_clear
+    cache_clear()   # 메모리·DB 캐시 모두 삭제
     flash("데이터가 갱신됩니다. 잠시 후 페이지를 새로고침하세요.", "success")
     return redirect(url_for("index"))
 

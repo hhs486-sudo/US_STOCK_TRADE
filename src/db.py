@@ -171,6 +171,23 @@ def cache_set(key: str, data: dict):
     threading.Thread(target=_write_db, daemon=True).start()
 
 
+# ── 캐시 전체 삭제 ─────────────────────────────
+def cache_clear():
+    """L1 메모리 캐시 + L2 DB 캐시 전체 삭제. 수동 갱신 시 사용."""
+    # L1 메모리 캐시 삭제
+    with _mem_lock:
+        _mem.clear()
+
+    # L2 DB 캐시 삭제 (SQLite·PostgreSQL 모두 호환, 연결 명시적 종료)
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM cache")
+        conn.commit()
+    finally:
+        conn.close()
+
+
 # ── 캐시 원본 조회 (TTL 무시) ──────────────────
 def cache_get_raw(key: str) -> dict | None:
     """TTL 무시하고 캐시 데이터 조회 (fallback용). L1 메모리 우선."""

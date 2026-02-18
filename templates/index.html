@@ -563,7 +563,7 @@ document.addEventListener("click", function (e) {
 
   /* ── 점수 계산 헬퍼 함수 (Python scoring.py 와 동일 로직) ── */
 
-  /* ATH 낙폭 → 낙폭점수 (0~100) */
+  /* ATH 낙폭 → 낙폭점수 (0~100) — 일반 주식용 (10~50% 구간) */
   function calcDrawdownScore(athDrawdownPct) {
     if (athDrawdownPct === null || isNaN(athDrawdownPct)) return 0;
     var d = Math.abs(athDrawdownPct);
@@ -571,6 +571,17 @@ document.addEventListener("click", function (e) {
     if (d >= 30) return 75;
     if (d >= 20) return 50;
     if (d >= 10) return 25;
+    return 0;
+  }
+
+  /* ATH 낙폭 → 낙폭점수 (0~100) — ETF 전용 (5~20% 구간, 지수추종 특성 반영) */
+  function calcEtfDrawdownScore(athDrawdownPct) {
+    if (athDrawdownPct === null || isNaN(athDrawdownPct)) return 0;
+    var d = Math.abs(athDrawdownPct);
+    if (d >= 20) return 100;
+    if (d >= 15) return 75;
+    if (d >= 10) return 50;
+    if (d >= 5)  return 25;
     return 0;
   }
 
@@ -673,7 +684,9 @@ document.addEventListener("click", function (e) {
             var recessionPenalty = parseFloat(badgeEl.dataset.recession || 0);
             var isEtf            = badgeEl.dataset.isEtf === "true";
 
-            var newDrawdownScore = calcDrawdownScore(newDrawdownPct);
+            /* ETF는 ETF 전용 낙폭 기준(5~20%) 사용, 주식은 일반 기준(10~50%) 사용 */
+            var newDrawdownScore = isEtf ? calcEtfDrawdownScore(newDrawdownPct)
+                                         : calcDrawdownScore(newDrawdownPct);
             var newTotal         = calcTotalScore(fearScore, newDrawdownScore,
                                                   fundamentalScore, isEtf, recessionPenalty);
             var gradeInfo        = getGradeInfo(newTotal);

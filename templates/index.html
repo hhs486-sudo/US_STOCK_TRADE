@@ -217,7 +217,7 @@
           <th>순위</th>
           <th>종목</th>
           <th>현재가</th>
-          <th>ATH 대비 낙폭</th>
+          <th>ATH(All-Time High) 대비 낙폭</th>
           <th>Buy 비율</th>
           <th>목표가 Upside</th>
           <th>추천 점수</th>
@@ -227,7 +227,7 @@
       <tbody>
         {% for s in stocks %}
         <tr data-ticker="{{ s.ticker }}">
-          <td class="text-muted">{{ loop.index }}</td>
+          <td class="text-muted rank-cell">{{ loop.index }}</td>
           <td>
             <a href="/stock/{{ s.ticker }}" class="fw-bold text-decoration-none">{{ s.ticker }}</a>
             <div class="text-muted small">{{ s.name[:30] if s.name else '' }}</div>
@@ -251,7 +251,8 @@
                 {% elif s.ath_drawdown_pct <= -15 %}text-warning
                 {% else %}text-muted{% endif %}"
                 data-ticker="{{ s.ticker }}"
-                data-drawdown="{{ s.ath_drawdown_pct }}">
+                data-drawdown="{{ s.ath_drawdown_pct }}"
+                data-ath="{{ s.ath if s.ath is not none else '' }}">
                 {{ s.ath_drawdown_pct }}%
               </span>
             {% else %}
@@ -278,7 +279,7 @@
               <span class="text-muted">N/A</span>
             {% endif %}
           </td>
-          <td class="fw-bold">{{ s.total_score }}</td>
+          <td class="fw-bold score-cell" data-ticker="{{ s.ticker }}" data-score="{{ s.total_score }}">{{ s.total_score }}</td>
           <td>
             <!-- 등급 배지 클릭 시 상세 분석 팝업 -->
             <span class="badge grade-badge"
@@ -560,6 +561,38 @@ document.addEventListener("click", function (e) {
     }
   }, 1000);
 
+  /* ── 점수 계산 헬퍼 함수 (Python scoring.py 와 동일 로직) ── */
+
+  /* ATH 낙폭 → 낙폭점수 (0~100) */
+  function calcDrawdownScore(athDrawdownPct) {
+    if (athDrawdownPct === null || isNaN(athDrawdownPct)) return 0;
+    var d = Math.abs(athDrawdownPct);
+    if (d >= 50) return 100;
+    if (d >= 30) return 75;
+    if (d >= 20) return 50;
+    if (d >= 10) return 25;
+    return 0;
+  }
+
+  /* 최종 추천점수 계산 */
+  function calcTotalScore(fearScore, drawdownScore, fundamentalScore, isEtf, recessionPenalty) {
+    var total;
+    if (isEtf) {
+      total = Math.round(fearScore * 0.5 + drawdownScore * 0.5);
+    } else {
+      total = Math.round(fearScore * 0.3 + drawdownScore * 0.4 + (fundamentalScore || 0) * 0.3);
+    }
+    return Math.max(0, total - (recessionPenalty || 0));
+  }
+
+  /* 점수 → 등급명 + 색상 */
+  function getGradeInfo(total) {
+    if (total >= 70) return { grade: "★ 강력 매수", color: "#27ae60" };
+    if (total >= 50) return { grade: "매수 고려",   color: "#2ecc71" };
+    if (total >= 30) return { grade: "관망",         color: "#f39c12" };
+    return             { grade: "매수 보류",         color: "#95a5a6" };
+  }
+
   /* ── 현재가 AJAX 갱신 함수 ── */
   function fetchPrices() {
     fetch("/api/prices")
@@ -570,7 +603,7 @@ document.addEventListener("click", function (e) {
       });
   }
 
-  /* ── 테이블 가격 셀 업데이트 ── */
+  /* ── 테이블 가격·낙폭·점수·등급 업데이트 ── */
   function updatePrices(data) {
     var updatedCount = 0;
 
@@ -578,20 +611,18 @@ document.addEventListener("click", function (e) {
       var item = data[ticker];
       if (!item || !item.price) return;
 
-      var newPrice = item.price;
+      var newPrice  = item.price;
       var changePct = item.change_pct;
 
-      /* 가격 셀 업데이트 */
+      /* ① 현재가 셀 업데이트 */
       var priceEl = document.querySelector(".price-cell[data-ticker='" + ticker + "']");
       if (priceEl) {
         var oldPrice = parseFloat(priceEl.dataset.price || 0);
 
-        /* 가격이 변경된 경우만 업데이트 + 애니메이션 */
         if (Math.abs(newPrice - oldPrice) >= 0.01) {
           priceEl.dataset.price = newPrice;
           priceEl.textContent = "$" + newPrice.toFixed(2);
 
-          /* 방향에 따라 색상 애니메이션 */
           priceEl.classList.remove("flash-up", "flash-down");
           void priceEl.offsetWidth; /* reflow 강제 (애니메이션 재시작) */
           priceEl.classList.add(newPrice > oldPrice ? "flash-up" : "flash-down");
@@ -601,21 +632,94 @@ document.addEventListener("click", function (e) {
         /* 전일 대비 변동률 표시 */
         var changeEl = document.querySelector(".change-cell[data-ticker='" + ticker + "']");
         if (changeEl && changePct !== null && changePct !== undefined) {
-          var sign   = changePct >= 0 ? "+" : "";
-          var color  = changePct >= 0 ? "text-success" : "text-danger";
+          var sign  = changePct >= 0 ? "+" : "";
+          var color = changePct >= 0 ? "text-success" : "text-danger";
           changeEl.className = "change-cell small " + color;
           changeEl.textContent = "(" + sign + changePct + "%)";
         }
       }
 
-      /* ATH 낙폭 재계산 및 업데이트 */
+      /* ② ATH 낙폭 재계산 및 셀 업데이트 */
       var drawdownEl = document.querySelector(".drawdown-cell[data-ticker='" + ticker + "']");
       if (drawdownEl) {
-        var athAttr = drawdownEl.closest("tr") &&
-                      drawdownEl.closest("tr").querySelector("[data-ath]");
-        /* ATH는 페이지 로드 시 data-ath 속성으로 가져옴 */
+        var ath = parseFloat(drawdownEl.dataset.ath || 0);
+        if (ath > 0) {
+          /* (현재가 - ATH) / ATH × 100, 소수점 1자리 */
+          var oldDrawdownPct = parseFloat(drawdownEl.dataset.drawdown || 0); /* 이전값 먼저 저장 */
+          var newDrawdownPct = Math.round((newPrice - ath) / ath * 1000) / 10;
+          drawdownEl.dataset.drawdown = newDrawdownPct;                       /* dataset 갱신 */
+
+          /* 색상 클래스 갱신 */
+          drawdownEl.className = "drawdown-cell";
+          if      (newDrawdownPct <= -30) drawdownEl.classList.add("text-danger", "fw-bold");
+          else if (newDrawdownPct <= -15) drawdownEl.classList.add("text-warning");
+          else                            drawdownEl.classList.add("text-muted");
+
+          /* 낙폭 플래시 애니메이션 (잔여 클래스 항상 먼저 제거) */
+          drawdownEl.classList.remove("flash-up", "flash-down");
+          drawdownEl.textContent = newDrawdownPct + "%";
+          if (Math.abs(newDrawdownPct - oldDrawdownPct) >= 0.1) {
+            void drawdownEl.offsetWidth;
+            drawdownEl.classList.add(newDrawdownPct > oldDrawdownPct ? "flash-up" : "flash-down");
+          }
+
+          /* ③ 낙폭점수·추천점수·등급 재계산 */
+          var badgeEl = document.querySelector(".grade-badge[data-ticker='" + ticker + "']");
+          if (badgeEl) {
+            var fearScore       = parseFloat(badgeEl.dataset.fear       || 0);
+            var fundamentalScore = badgeEl.dataset.fundamental !== ""
+                                  ? parseFloat(badgeEl.dataset.fundamental)
+                                  : null;
+            var recessionPenalty = parseFloat(badgeEl.dataset.recession || 0);
+            var isEtf            = badgeEl.dataset.isEtf === "true";
+
+            var newDrawdownScore = calcDrawdownScore(newDrawdownPct);
+            var newTotal         = calcTotalScore(fearScore, newDrawdownScore,
+                                                  fundamentalScore, isEtf, recessionPenalty);
+            var gradeInfo        = getGradeInfo(newTotal);
+
+            /* 등급 배지 갱신 */
+            badgeEl.textContent           = gradeInfo.grade;
+            badgeEl.style.background      = gradeInfo.color;
+            badgeEl.dataset.total         = newTotal;
+            badgeEl.dataset.grade         = gradeInfo.grade;
+            badgeEl.dataset.gradeColor    = gradeInfo.color;
+            badgeEl.dataset.drawdownScore = newDrawdownScore;
+            badgeEl.dataset.athDrawdown   = newDrawdownPct;
+
+            /* 추천점수 셀 갱신 + 플래시 애니메이션 */
+            var scoreEl = document.querySelector(".score-cell[data-ticker='" + ticker + "']");
+            if (scoreEl) {
+              var oldTotal = parseInt(scoreEl.dataset.score || 0, 10);
+              /* 재정렬(appendChild) 시 잔여 클래스로 애니메이션 재실행 방지: 항상 먼저 제거 */
+              scoreEl.classList.remove("flash-up", "flash-down");
+              if (newTotal !== oldTotal) {
+                scoreEl.dataset.score = newTotal;
+                scoreEl.textContent   = newTotal;
+                void scoreEl.offsetWidth; /* reflow 강제 후 애니메이션 추가 */
+                scoreEl.classList.add(newTotal > oldTotal ? "flash-up" : "flash-down");
+              }
+            }
+          }
+        }
       }
     });
+
+    /* ④ 점수 기준 행 재정렬 + 순위 번호 갱신 */
+    var tbody = document.querySelector("table tbody");
+    if (tbody) {
+      var rows = Array.from(tbody.querySelectorAll("tr[data-ticker]"));
+      rows.sort(function(a, b) {
+        var sA = parseInt(a.querySelector(".score-cell") && a.querySelector(".score-cell").textContent || 0, 10);
+        var sB = parseInt(b.querySelector(".score-cell") && b.querySelector(".score-cell").textContent || 0, 10);
+        return sB - sA;  /* 내림차순 */
+      });
+      rows.forEach(function(row, idx) {
+        tbody.appendChild(row);  /* 재정렬 */
+        var rankCell = row.querySelector(".rank-cell");
+        if (rankCell) rankCell.textContent = idx + 1;
+      });
+    }
 
     /* 갱신 배지 업데이트 */
     if (priceBadge) {

@@ -385,14 +385,24 @@ document.addEventListener("click", function (e) {
     if (s >= 30) return "다소 불안 — 하락 압력이 있으나 아직 공포 수준은 아닙니다.";
     return "시장 안정·탐욕 상태 — 매수 타이밍으로는 불리합니다.";
   }
-  function ddDesc(d) {
+  function ddDesc(d, isEtf) {
     if (d == null) return "낙폭 데이터 없음";
     var pct = Math.abs(d);
-    if (pct >= 50) return "ATH 대비 " + d + "% — 반토막 수준, 강력한 매수 구간";
-    if (pct >= 30) return "ATH 대비 " + d + "% — 큰 조정, 매수 적극 검토 구간";
-    if (pct >= 20) return "ATH 대비 " + d + "% — 중간 조정, 매수 고려 가능";
-    if (pct >= 10) return "ATH 대비 " + d + "% — 소폭 조정, 충분한 하락 아님";
-    return "ATH 대비 " + d + "% — 고점 근처, 매수 주의";
+    if (isEtf) {
+      /* ETF는 지수추종 특성상 낙폭이 작으므로 5~20% 기준 사용 */
+      if (pct >= 20) return "ATH 대비 " + d + "% — ETF 대형 조정, 강력한 매수 구간";
+      if (pct >= 15) return "ATH 대비 " + d + "% — ETF 상당한 조정, 매수 적극 검토 구간";
+      if (pct >= 10) return "ATH 대비 " + d + "% — ETF 중간 조정, 매수 고려 가능";
+      if (pct >= 5)  return "ATH 대비 " + d + "% — ETF 소폭 조정, 추가 하락 관망 권장";
+      return "ATH 대비 " + d + "% — 고점 근처, 매수 주의";
+    } else {
+      /* 일반 주식 기준 10~50% */
+      if (pct >= 50) return "ATH 대비 " + d + "% — 반토막 수준, 강력한 매수 구간";
+      if (pct >= 30) return "ATH 대비 " + d + "% — 큰 조정, 매수 적극 검토 구간";
+      if (pct >= 20) return "ATH 대비 " + d + "% — 중간 조정, 매수 고려 가능";
+      if (pct >= 10) return "ATH 대비 " + d + "% — 소폭 조정, 충분한 하락 아님";
+      return "ATH 대비 " + d + "% — 고점 근처, 매수 주의";
+    }
   }
   function fundDesc(score, buy, pe, roe, peg, fcf) {
     if (score == null) return "ETF — 펀더멘탈 평가 제외 (Fear + 낙폭만 적용)";
@@ -410,9 +420,13 @@ document.addEventListener("click", function (e) {
     if (penalty >= 5)  return "장단기 금리차 플랫화 — 경기 둔화 주의 (-5점 반영)";
     return "장단기 금리차 정상 — 침체 패널티 없음";
   }
-  function gradeDesc(g) {
-    if (g.includes("강력")) return "시장 공포 + 큰 낙폭 + 우수한 펀더멘탈이 동시에 충족된 최적 매수 타이밍입니다. 분할 매수를 적극 고려하세요.";
-    if (g.includes("매수 고려")) return "일부 조건이 충족된 매수 고려 구간입니다. 추가 하락 가능성을 고려해 소량부터 분할 접근을 권장합니다.";
+  function gradeDesc(g, isEtf) {
+    if (g.includes("강력")) return isEtf
+      ? "시장 공포 + ETF 대형 낙폭이 동시에 충족된 최적 매수 타이밍입니다. 분할 매수를 적극 고려하세요."
+      : "시장 공포 + 큰 낙폭 + 우수한 펀더멘탈이 동시에 충족된 최적 매수 타이밍입니다. 분할 매수를 적극 고려하세요.";
+    if (g.includes("매수 고려")) return isEtf
+      ? "시장 공포와 ETF 낙폭 조건이 충족된 매수 고려 구간입니다. 소량부터 분할 접근을 권장합니다."
+      : "일부 조건이 충족된 매수 고려 구간입니다. 추가 하락 가능성을 고려해 소량부터 분할 접근을 권장합니다.";
     if (g.includes("관망")) return "매수 조건이 부분적으로만 충족됩니다. 시장 상황을 더 지켜보거나 하락 시 준비하는 단계입니다.";
     return "현재 매수 조건이 불충분합니다. 시장 안정 또는 가격 조정을 기다리는 것을 권장합니다.";
   }
@@ -436,7 +450,7 @@ document.addEventListener("click", function (e) {
   html += '<div class="small text-muted">/ 100점</div></div>';
   html += '<div class="flex-grow-1">';
   html += progressBar(total, 100, gradeColor);
-  html += '<div class="mt-2 small">' + gradeDesc(grade) + '</div>';
+  html += '<div class="mt-2 small">' + gradeDesc(grade, isEtf) + '</div>';
   html += '</div></div>';
   if (recession > 0) {
     html += '<div class="alert alert-warning py-1 small mb-0">⚠ 침체 패널티 -' + recession + '점 차감 (원점수: ' + baseScore + '점)</div>';
@@ -457,7 +471,7 @@ document.addEventListener("click", function (e) {
   html += '<div class="col-md-4"><div class="card p-3 h-100 border-warning border-opacity-25">';
   html += '<div class="small fw-bold text-warning mb-1">🟠 낙폭 점수 &nbsp;' + ddScore + '/100</div>';
   html += progressBar(ddScore, 100, "#f39c12");
-  html += '<div class="small text-muted mt-2">' + ddDesc(athDd) + '</div>';
+  html += '<div class="small text-muted mt-2">' + ddDesc(athDd, isEtf) + '</div>';
   html += '</div></div>';
 
   /* 펀더멘탈 점수 */

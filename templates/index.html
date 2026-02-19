@@ -9,7 +9,8 @@
 
   <!-- Fear & Greed -->
   <div class="col-6 col-md-2">
-    <div class="card h-100 text-center p-3">
+    <a href="https://edition.cnn.com/markets/fear-and-greed" target="_blank" rel="noopener noreferrer" class="text-decoration-none">
+    <div class="card h-100 text-center p-3 indicator-card">
       <div class="text-muted small"
         data-bs-toggle="tooltip"
         data-bs-html="true"
@@ -33,11 +34,13 @@
         <div class="text-muted mt-2">N/A</div>
       {% endif %}
     </div>
+    </a>
   </div>
 
   <!-- VIX -->
   <div class="col-6 col-md-2">
-    <div class="card h-100 text-center p-3">
+    <a href="https://finance.yahoo.com/quote/%5EVIX/" target="_blank" rel="noopener noreferrer" class="text-decoration-none">
+    <div class="card h-100 text-center p-3 indicator-card">
       <div class="text-muted small"
         data-bs-toggle="tooltip"
         data-bs-html="true"
@@ -62,11 +65,13 @@
         <div class="text-muted mt-2">N/A</div>
       {% endif %}
     </div>
+    </a>
   </div>
 
   <!-- Market RSI -->
   <div class="col-6 col-md-2">
-    <div class="card h-100 text-center p-3">
+    <a href="https://finance.yahoo.com/quote/%5EGSPC/" target="_blank" rel="noopener noreferrer" class="text-decoration-none">
+    <div class="card h-100 text-center p-3 indicator-card">
       <div class="text-muted small"
         data-bs-toggle="tooltip"
         data-bs-html="true"
@@ -105,11 +110,13 @@
         <div class="text-muted mt-2">N/A</div>
       {% endif %}
     </div>
+    </a>
   </div>
 
   <!-- CPI -->
   <div class="col-6 col-md-2">
-    <div class="card h-100 text-center p-3">
+    <a href="https://fred.stlouisfed.org/series/CPIAUCSL" target="_blank" rel="noopener noreferrer" class="text-decoration-none">
+    <div class="card h-100 text-center p-3 indicator-card">
       <div class="text-muted small"
         data-bs-toggle="tooltip"
         data-bs-html="true"
@@ -134,11 +141,13 @@
         </div>
       {% endif %}
     </div>
+    </a>
   </div>
 
   <!-- 장단기 금리차 -->
   <div class="col-6 col-md-2">
-    <div class="card h-100 text-center p-3">
+    <a href="https://fred.stlouisfed.org/series/T10Y2Y" target="_blank" rel="noopener noreferrer" class="text-decoration-none">
+    <div class="card h-100 text-center p-3 indicator-card">
       <div class="text-muted small"
         data-bs-toggle="tooltip"
         data-bs-html="true"
@@ -161,11 +170,13 @@
         <div class="text-muted mt-2 small">N/A</div>
       {% endif %}
     </div>
+    </a>
   </div>
 
   <!-- M2 통화량 증가율 -->
   <div class="col-6 col-md-2">
-    <div class="card h-100 text-center p-3">
+    <a href="https://fred.stlouisfed.org/series/M2SL" target="_blank" rel="noopener noreferrer" class="text-decoration-none">
+    <div class="card h-100 text-center p-3 indicator-card">
       <div class="text-muted small"
         data-bs-toggle="tooltip"
         data-bs-html="true"
@@ -195,6 +206,7 @@
         </div>
       {% endif %}
     </div>
+    </a>
   </div>
 </div>
 
@@ -583,6 +595,16 @@ document.addEventListener("click", function (e) {
 });
 </script>
 <style>
+/* 시장 심리 지표 카드 — 클릭 가능 hover 효과 */
+.indicator-card {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  cursor: pointer;
+}
+.indicator-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
 /* 가격 갱신 시 플래시 애니메이션 */
 @keyframes flashGreen {
   0%   { background-color: rgba(40,167,69,0.4); }

@@ -1,3 +1,4 @@
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
@@ -17,7 +18,23 @@ def get_stock_data(ticker: str) -> dict:
 
     try:
         t = yf.Ticker(ticker)
-        info = t.info or {}
+
+        # info 조회 — 빈 dict 반환 시 1회 재시도 (배포 서버 rate limit 대응)
+        # Yahoo Finance가 서버 IP를 일시 차단하거나 throttle 시 {} 또는 1개 키 dict 반환
+        info = {}
+        for _attempt in range(2):
+            try:
+                raw = t.info or {}
+                if len(raw) >= 10:      # 정상 응답: 키 10개 이상
+                    info = raw
+                    break
+                if _attempt == 0:       # 비정상 응답 시 1초 대기 후 재시도
+                    time.sleep(1.0)
+            except Exception:
+                if _attempt == 0:
+                    time.sleep(1.0)
+                else:
+                    raise
 
         # 가격 이력 (5년, ATH 계산용)
         hist_5y = t.history(period="5y")
@@ -145,7 +162,9 @@ def get_stock_data(ticker: str) -> dict:
         is_etf = (info.get("quoteType", "").upper() == "ETF")
 
         # ETF 전용 지표
-        ytd_return        = _safe_pct(info.get("ytdReturn"))
+        # ytdReturn: yfinance 1.x 에서 이미 % 단위 반환 (1.22 = 1.22%)
+        #            threeYearAverageReturn은 decimal (0.27 = 27%) — 단위 불일치 주의
+        ytd_return        = _safe_round(info.get("ytdReturn"), 2)
         three_year_return = _safe_pct(info.get("threeYearAverageReturn"))
         total_assets      = info.get("totalAssets")   # AUM (달러)
 
@@ -348,7 +367,8 @@ def enrich_watchlist(tickers: list[str], fear_score: int,
         return []
 
     # 모든 종목 데이터를 동시에 병렬 조회 (캐시 적중 시 즉시 반환)
-    with ThreadPoolExecutor(max_workers=min(len(tickers), 8)) as ex:
+    # workers=4: 8에서 줄임 — Yahoo Finance rate limit 방지 (동시 info 요청 최소화)
+    with ThreadPoolExecutor(max_workers=min(len(tickers), 4)) as ex:
         stock_futures = {ticker: ex.submit(get_stock_data, ticker) for ticker in tickers}
 
     results = []

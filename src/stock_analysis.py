@@ -41,10 +41,39 @@ def get_stock_data(ticker: str) -> dict:
 
         # 이동평균 계산 (5년 전체 기준 → 1년 차트에 정확하게 반영)
         import pandas as pd
+        import pandas_ta as ta
         closes_5y = hist_5y["Close"]
         ma20  = closes_5y.rolling(20).mean()    # 20일 이동평균
         ma60  = closes_5y.rolling(60).mean()    # 60일 이동평균
         ma120 = closes_5y.rolling(120).mean()   # 120일 이동평균
+
+        # ── 기술적 지표 계산 ──────────────────────────────
+        # RSI(14): 상대강도지수 — 30이하 과매도, 70이상 과매수
+        rsi_series = ta.rsi(closes_5y, length=14)
+        rsi = None
+        if rsi_series is not None and len(rsi_series) > 0:
+            last_rsi = rsi_series.iloc[-1]
+            rsi = round(float(last_rsi), 1) if not pd.isna(last_rsi) else None
+
+        # MACD(12,26,9): MACD선 > Signal선이면 상승 모멘텀
+        macd_df = ta.macd(closes_5y, fast=12, slow=26, signal=9)
+        macd_bullish = False
+        if macd_df is not None and not macd_df.empty:
+            last_macd   = macd_df["MACD_12_26_9"].iloc[-1]
+            last_signal = macd_df["MACDs_12_26_9"].iloc[-1]
+            if not pd.isna(last_macd) and not pd.isna(last_signal):
+                macd_bullish = bool(last_macd > last_signal)
+
+        # MA 배열 신호: price vs MA20 vs MA60 방향 비교
+        latest_price  = float(closes_5y.iloc[-1])
+        latest_ma20   = float(ma20.iloc[-1])  if not pd.isna(ma20.iloc[-1])  else None
+        latest_ma60   = float(ma60.iloc[-1])  if not pd.isna(ma60.iloc[-1])  else None
+        ma_signal = "neutral"
+        if latest_ma20 is not None and latest_ma60 is not None:
+            if latest_price > latest_ma20 and latest_ma20 > latest_ma60:
+                ma_signal = "bullish"   # 황금 배열 (상승 추세)
+            elif latest_price < latest_ma20 and latest_ma20 < latest_ma60:
+                ma_signal = "bearish"   # 역배열 (하락 추세)
 
         # 1년 가격·거래량·이동평균 이력 (차트용, 전체 거래일 포함)
         hist_1y   = hist_5y.iloc[-252:]
@@ -76,6 +105,15 @@ def get_stock_data(ticker: str) -> dict:
         roe = _safe_pct(info.get("returnOnEquity"))
         # PEG: PER ÷ EPS성장률 — 1 미만이면 성장 대비 저평가
         peg = _safe_round(info.get("trailingPegRatio") or info.get("pegRatio"), 2)
+        # P/S: 주가매출비율 — 낮을수록 매출 대비 저평가
+        price_to_sales = _safe_round(info.get("priceToSalesTrailing12Months"), 2)
+        # 부채비율: 자본 대비 총부채 — 낮을수록 재무건전
+        # yfinance는 D/E를 백분율(×100)로 반환하므로 ÷100해서 실제 비율로 변환
+        # 예: yfinance 432.51 → 실제 D/E 4.33배
+        _raw_de = info.get("debtToEquity")
+        debt_to_equity = _safe_round(_raw_de / 100, 2) if _raw_de is not None else None
+        # 유동비율: 유동자산÷유동부채 — 1 이상이면 단기 채무 감당 가능
+        current_ratio  = _safe_round(info.get("currentRatio"), 2)
 
         # 애널리스트 의견 (info 기반)
         analyst_count   = info.get("numberOfAnalystOpinions", 0) or 0
@@ -135,8 +173,15 @@ def get_stock_data(ticker: str) -> dict:
             "revenue_growth_pct": revenue_growth,
             "free_cash_flow":    free_cash_flow,
             "fcf_positive":      fcf_positive,
-            "roe":               roe,    # 자기자본이익률 (%)
-            "peg":               peg,    # PER/EPS성장률
+            "roe":               roe,              # 자기자본이익률 (%)
+            "peg":               peg,              # PER/EPS성장률
+            "price_to_sales":    price_to_sales,   # 주가매출비율
+            "debt_to_equity":    debt_to_equity,   # 부채비율 (D/E)
+            "current_ratio":     current_ratio,    # 유동비율
+            # 기술적 지표
+            "rsi":               rsi,              # RSI(14) 최신값
+            "macd_bullish":      macd_bullish,     # MACD > Signal 여부
+            "ma_signal":         ma_signal,        # bullish/bearish/neutral
             # 애널리스트
             "analyst_count":    analyst_count,
             "strong_buy":       strong_buy,

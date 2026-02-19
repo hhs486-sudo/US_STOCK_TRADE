@@ -340,6 +340,10 @@
               data-fundamental="{{ s.fundamental_score if s.fundamental_score is not none else '' }}"
               data-recession="{{ s.recession_penalty if s.recession_penalty is defined else 0 }}"
               data-m2-adj="{{ s.m2_adjustment if s.m2_adjustment is defined else 0 }}"
+              data-technical="{{ s.technical_score if s.technical_score is defined else 0 }}"
+              data-rsi="{{ s.rsi if (s.rsi is defined and s.rsi is not none) else '' }}"
+              data-macd-bullish="{{ 'true' if s.macd_bullish else 'false' }}"
+              data-ma-signal="{{ s.ma_signal if (s.ma_signal is defined and s.ma_signal) else 'neutral' }}"
               data-ath-drawdown="{{ s.ath_drawdown_pct }}"
               data-buy-ratio="{{ s.buy_ratio_pct if s.buy_ratio_pct is not none else '' }}"
               data-forward-pe="{{ s.forward_pe if s.forward_pe is not none else '' }}"
@@ -417,6 +421,10 @@ document.addEventListener("click", function (e) {
   var roe         = badge.dataset.roe !== "" ? parseFloat(badge.dataset.roe) : null;
   var peg         = badge.dataset.peg !== "" ? parseFloat(badge.dataset.peg) : null;
   var fcf         = badge.dataset.fcf;
+  var techScore   = parseInt(badge.dataset.technical || "0");
+  var rsiVal      = badge.dataset.rsi;
+  var macdBull    = badge.dataset.macdBullish === "true";
+  var maSignal    = badge.dataset.maSignal || "neutral";
   var isEtf       = badge.dataset.isEtf === "true";
   var reason      = badge.dataset.reason;
 
@@ -426,64 +434,106 @@ document.addEventListener("click", function (e) {
     ticker + " <small class='text-muted'>" + name.substring(0, 30) + "</small>" +
     " &nbsp;<span class='badge' style='background:" + gradeColor + "'>" + grade + "</span>";
 
-  /* ── 점수 해석 함수 ── */
+  /* ── 점수 해석 함수 (초보자 친화적 설명) ── */
   function fearDesc(s) {
-    if (s >= 70) return "시장 극도 공포 — 역사적 저점 근처 가능성이 높습니다.";
-    if (s >= 50) return "시장 불안·하락 — 공포 분위기가 퍼져 있는 상태입니다.";
-    if (s >= 30) return "다소 불안 — 하락 압력이 있으나 아직 공포 수준은 아닙니다.";
-    return "시장 안정·탐욕 상태 — 매수 타이밍으로는 불리합니다.";
+    if (s >= 70) return '<strong>🔴 극도 공포</strong> — 투자자 대부분이 패닉 매도 중인 상태입니다.<br>역사적으로 이 구간이 <em>최고의 저가 매수 타이밍</em>이었습니다.<br><span class="text-info">💡 "남들이 두려울 때 사라" — 워런 버핏의 투자 격언이 적용되는 순간</span>';
+    if (s >= 50) return '<strong>🟠 공포</strong> — 하락 공포 심리가 퍼져 좋은 주식도 저평가되는 시기입니다.<br><span class="text-info">💡 분할 매수를 시작해볼 수 있는 구간 (한 번에 사지 말고 나눠서 매수)</span>';
+    if (s >= 30) return '<strong>🟡 불안</strong> — 약간의 하락 압력이 있지만 극단적 공포는 아닙니다.<br><span class="text-info">💡 지켜보며 매수 준비를 하는 단계, 아직 서두를 필요 없음</span>';
+    return '<strong>🟢 안정·탐욕</strong> — 투자자들이 낙관적이라 가격이 고평가될 수 있습니다.<br><span class="text-info">💡 신규 매수보다 기존 보유 종목 점검 권장. 좋은 기회는 공포 시에 옵니다.</span>';
   }
   function ddDesc(d, isEtf) {
     if (d == null) return "낙폭 데이터 없음";
     var pct = Math.abs(d);
+    var label, guide;
     if (isEtf) {
-      /* ETF는 지수추종 특성상 낙폭이 작으므로 5~20% 기준 사용 */
-      if (pct >= 20) return "ATH 대비 " + d + "% — ETF 대형 조정, 강력한 매수 구간";
-      if (pct >= 15) return "ATH 대비 " + d + "% — ETF 상당한 조정, 매수 적극 검토 구간";
-      if (pct >= 10) return "ATH 대비 " + d + "% — ETF 중간 조정, 매수 고려 가능";
-      if (pct >= 5)  return "ATH 대비 " + d + "% — ETF 소폭 조정, 추가 하락 관망 권장";
-      return "ATH 대비 " + d + "% — 고점 근처, 매수 주의";
+      if (pct >= 20) { label = "대형 조정 🔴"; guide = "지수 자체가 크게 내려온 상태입니다. 역사적으로 이런 ETF 낙폭 구간 이후 강한 회복이 뒤따랐습니다. <strong>적극적 분할 매수 구간</strong>입니다."; }
+      else if (pct >= 15) { label = "상당한 조정 🟠"; guide = "ETF 기준 의미있는 하락입니다. 소량씩 분할 매수를 검토해 볼 만한 구간입니다."; }
+      else if (pct >= 10) { label = "중간 조정 🟡"; guide = "어느 정도 내려왔지만 추가 하락 가능성도 있습니다. 신중하게 소량씩 접근하세요."; }
+      else if (pct >= 5)  { label = "소폭 조정 ⚪"; guide = "아직 큰 할인 구간은 아닙니다. 추가 하락을 기다리거나 극소량만 접근하세요."; }
+      else                { label = "고점 근처 ⚪"; guide = "현재가가 역대 최고가(ATH) 근처입니다. 신규 매수는 신중히 판단하세요."; }
     } else {
-      /* 일반 주식 기준 10~50% */
-      if (pct >= 50) return "ATH 대비 " + d + "% — 반토막 수준, 강력한 매수 구간";
-      if (pct >= 30) return "ATH 대비 " + d + "% — 큰 조정, 매수 적극 검토 구간";
-      if (pct >= 20) return "ATH 대비 " + d + "% — 중간 조정, 매수 고려 가능";
-      if (pct >= 10) return "ATH 대비 " + d + "% — 소폭 조정, 충분한 하락 아님";
-      return "ATH 대비 " + d + "% — 고점 근처, 매수 주의";
+      if (pct >= 50) { label = "반토막 수준 🔴"; guide = "고점 대비 절반 이상 하락한 상태입니다. 회사 기초체력(펀더멘탈)이 건재하다면 역사적 최고의 매수 기회일 수 있습니다."; }
+      else if (pct >= 30) { label = "큰 조정 🟠"; guide = "고점 대비 크게 내려온 구간입니다. 펀더멘탈이 좋다면 <strong>분할 매수를 적극 검토</strong>하세요."; }
+      else if (pct >= 20) { label = "중간 조정 🟡"; guide = "의미있는 조정이지만 추가 하락 여지도 있습니다. 소량씩 나눠 접근하세요."; }
+      else if (pct >= 10) { label = "소폭 조정 ⚪"; guide = "아직 충분히 저렴한 구간이 아닙니다. 더 큰 하락을 기다리는 것을 권장합니다."; }
+      else                { label = "고점 근처 ⚪"; guide = "역대 최고가 근처입니다. 고점 매수 리스크가 있으므로 신중히 판단하세요."; }
     }
+    return 'ATH(역대 최고가) 대비 <strong>' + d + '%</strong> — ' + label + '<br><span class="text-muted">' + guide + '</span><br><span class="text-info" style="font-size:0.75em">💡 ATH = All-Time High, 상장 이후 가장 높았던 주가</span>';
   }
   function fundDesc(score, buy, pe, roe, peg, fcf) {
-    if (score == null) return "ETF — 펀더멘탈 평가 제외 (Fear + 낙폭만 적용)";
-    var parts = [];
-    if (buy != null)  parts.push("Buy비율 " + buy + "%" + (buy >= 70 ? " ✓" : ""));
-    if (pe  != null)  parts.push("Forward PE " + pe + (pe < 20 ? " ✓" : pe > 30 ? " ✗" : ""));
-    if (roe != null)  parts.push("ROE " + roe + "%" + (roe >= 15 ? " ✓" : ""));
-    if (peg != null)  parts.push("PEG " + peg + (peg < 1 ? " ✓저평가" : peg > 2 ? " ✗고평가" : ""));
-    if (fcf)          parts.push("FCF " + fcf + (fcf === "양호" ? " ✓" : " ✗"));
-    return parts.length ? parts.join(" &nbsp;|&nbsp; ") : "데이터 부족";
+    if (score == null) return 'ETF는 펀더멘탈(재무) 점수를 산출하지 않습니다.<br><span class="text-muted">ETF 점수 = 시장 공포 + 낙폭 + 기술적 지표로만 계산됩니다.</span>';
+    var lines = [];
+    if (buy != null) {
+      var bi = buy >= 70 ? "✅" : buy >= 50 ? "🟡" : "❌";
+      var bl = buy >= 70 ? "강력 매수 추천" : buy >= 50 ? "매수 우세" : "매수 의견 낮음";
+      lines.push(bi + ' 애널리스트 <strong>Buy비율 ' + buy + '%</strong> — ' + bl);
+      lines.push('<span class="text-muted" style="font-size:0.75em">월가 전문 애널리스트들이 이 종목을 매수 추천하는 비율. 70% 이상이면 전문가 의견이 긍정적.</span>');
+    }
+    if (peg != null) {
+      var pi = peg < 1 ? "✅" : peg <= 2 ? "🟡" : "❌";
+      var pl = peg < 1 ? "성장 대비 저평가 🎯" : peg <= 2 ? "적정 밸류에이션" : "고평가 주의";
+      lines.push(pi + ' <strong>PEG ' + peg + '</strong> — ' + pl);
+      lines.push('<span class="text-muted" style="font-size:0.75em">PEG = PER ÷ 성장률. 1 미만이면 성장성에 비해 주가가 저렴한 것. 성장주 판단에 유용.</span>');
+    } else if (pe != null) {
+      var pei = pe < 20 ? "✅" : pe < 30 ? "🟡" : "❌";
+      var pel = pe < 15 ? "저평가" : pe < 20 ? "적정" : pe < 30 ? "다소 고평가" : "고평가 주의";
+      lines.push(pei + ' <strong>Forward PER ' + pe + '</strong> — ' + pel);
+      lines.push('<span class="text-muted" style="font-size:0.75em">PER = 주가 ÷ 순이익. 내년 예상 실적 기준. 낮을수록 싸게 사는 것. (업종 평균과 비교 권장)</span>');
+    }
+    if (roe != null) {
+      var ri = roe >= 20 ? "✅" : roe >= 15 ? "🟡" : "⚪";
+      var rl = roe >= 20 ? "우수" : roe >= 15 ? "양호" : "보통";
+      lines.push(ri + ' <strong>ROE ' + roe + '%</strong> — 자본 효율성 ' + rl);
+      lines.push('<span class="text-muted" style="font-size:0.75em">ROE = 순이익 ÷ 자기자본. 투자한 돈 대비 얼마나 벌었는지. 15% 이상이면 우수한 기업.</span>');
+    }
+    if (fcf) {
+      var fi = fcf === "양호" ? "✅" : "❌";
+      var fl = fcf === "양호" ? "재무 건전 — 배당·자사주매입·투자 여력 있음" : "현금 부족 — 성장 투자나 부채 상환에 주의 필요";
+      lines.push(fi + ' <strong>잉여현금흐름(FCF)</strong> ' + fcf + ' — ' + fl);
+      lines.push('<span class="text-muted" style="font-size:0.75em">FCF = 영업 후 남는 실제 현금. 양수일수록 회사가 실제로 돈을 잘 버는 것.</span>');
+    }
+    return lines.length ? lines.join("<br>") : "펀더멘탈 데이터가 부족합니다.";
   }
   function recessionDesc(penalty) {
-    if (penalty >= 25) return "장단기 금리차 심각 역전 — 경기침체 강한 경고 신호 (-25점 반영)";
-    if (penalty >= 15) return "장단기 금리차 역전 — 침체 선행지표 발동 (-15점 반영)";
-    if (penalty >= 5)  return "장단기 금리차 플랫화 — 경기 둔화 주의 (-5점 반영)";
-    return "장단기 금리차 정상 — 침체 패널티 없음";
+    if (penalty >= 25) return '<strong>🔴 심각한 경기침체 경고</strong> — 장단기 금리차가 크게 역전되었습니다.<br>단기 금리 > 장기 금리 상태로, 과거 사례에서 1~2년 내 경기침체가 발생한 강력한 선행지표입니다.<br><span class="text-muted" style="font-size:0.75em">장기채 금리가 낮다는 건 시장이 "미래 경기가 나빠질 것"을 예상한다는 신호</span><br>점수 -25점 차감.';
+    if (penalty >= 15) return '<strong>🟠 금리차 역전</strong> — 단기 금리가 장기 금리보다 높아진 상태입니다.<br>역사적으로 6~18개월 내 경기침체의 선행 신호로 알려져 있습니다.<br>점수 -15점 차감.';
+    if (penalty >= 5)  return '<strong>🟡 금리차 플랫</strong> — 장단기 금리차가 거의 없는 상태입니다.<br>경기 둔화 가능성에 주의가 필요합니다. 점수 -5점 차감.';
+    return '<strong>🟢 정상</strong> — 장기 금리 > 단기 금리의 건강한 구조입니다.<br>경기침체 패널티 없음.<br><span class="text-muted" style="font-size:0.75em">정상: 10년 만기 채권 금리 > 2년 만기 채권 금리 (미래에 경기가 좋아질 것으로 기대)</span>';
   }
   function m2Desc(adj) {
-    if (adj >= 10) return "M2 통화량 급증(YoY 15%↑) — 유동성 과잉, 위험자산 강력 매수 신호 (+10점 반영)";
-    if (adj >= 5)  return "M2 통화량 확장(YoY 7~15%) — 유동성 풍부, 매수 우호 환경 (+5점 반영)";
-    if (adj >= 0)  return "M2 통화량 중립/건강한 성장(YoY 0~7%) — 유동성 안정, 조정 없음";
-    if (adj >= -7) return "M2 통화량 수축(YoY 0~-2%) — 유동성 감소 구간, 증시 부담 (-7점 반영)";
-    return "M2 통화량 심각 수축(YoY -2%↓) — 유동성 급격히 줄어 증시 하락 압력 강함 (-15점 반영)";
+    if (adj >= 10) return '<strong>💧 유동성 과잉</strong> — M2 통화량이 전년 대비 15% 이상 급증했습니다.<br>시중에 돈이 넘쳐 주식 등 위험자산으로 유입될 가능성이 높습니다.<br><span class="text-muted" style="font-size:0.75em">M2 = 시중에 유통되는 돈의 총량. 돈이 많아지면 주식으로 흘러들어 주가 상승 동력</span><br>+10점 가산.';
+    if (adj >= 5)  return '<strong>💧 유동성 풍부</strong> — M2 통화량이 전년 대비 7~15% 증가했습니다.<br>적당한 유동성 확장으로 증시에 우호적인 환경입니다. +5점 가산.';
+    if (adj >= 0)  return '<strong>⚪ 유동성 중립</strong> — M2 통화량이 0~7% 범위로 안정적입니다.<br>점수 조정 없음. 건강한 통화 성장 범위입니다.';
+    if (adj >= -7) return '<strong>⚠ 유동성 수축</strong> — M2 통화량이 감소하고 있습니다.<br>시중 자금이 줄어 증시 상승 동력이 약해집니다. -7점 차감.';
+    return '<strong>🔴 유동성 급격 수축</strong> — M2 통화량이 전년 대비 2% 이상 급감했습니다.<br>역사적으로 강한 증시 하락 압력과 연관됩니다. -15점 차감.';
+  }
+  function techDesc(score, rsi, macdBull, maSignal) {
+    var lines = [];
+    /* RSI */
+    if (rsi !== null && rsi !== "" && rsi !== undefined) {
+      var rv = parseFloat(rsi);
+      var ri = rv <= 30 ? "✅" : rv <= 40 ? "🟡" : rv >= 70 ? "❌" : "⚪";
+      var rl = rv <= 30 ? "과매도 — 반등 강력 신호 🎯" : rv <= 40 ? "약세권 — 반등 가능성" : rv <= 50 ? "중립↓" : rv < 70 ? "중립↑" : "과매수 — 단기 조정 주의";
+      lines.push(ri + ' <strong>RSI(14): ' + rv + '</strong> — ' + rl);
+      lines.push('<span class="text-muted" style="font-size:0.75em">RSI는 최근 14일 상승·하락 힘의 비율. 30↓ "너무 많이 팔렸다(저평가)", 70↑ "너무 많이 올랐다(과열)"</span>');
+    }
+    /* MACD */
+    var mi = (macdBull === true || macdBull === "true") ? "✅" : "❌";
+    var ml = (macdBull === true || macdBull === "true") ? "상승 모멘텀 — 단기 추세가 올라가는 중" : "하락 모멘텀 — 단기 추세가 내려가는 중";
+    lines.push(mi + ' <strong>MACD</strong>: ' + ml);
+    lines.push('<span class="text-muted" style="font-size:0.75em">MACD = 단기(12일)·장기(26일) 이동평균 차이. 단기가 장기를 위로 교차하면 상승 전환 신호</span>');
+    /* MA 배열 */
+    var si = maSignal === "bullish" ? "✅" : maSignal === "bearish" ? "❌" : "🟡";
+    var sl = maSignal === "bullish" ? "황금 배열 — 가격 > MA20 > MA60, 상승 추세 확인" : maSignal === "bearish" ? "역배열 — 가격 < MA20 < MA60, 하락 추세" : "중립 — 방향성 불분명";
+    lines.push(si + ' <strong>이동평균 배열</strong>: ' + sl);
+    lines.push('<span class="text-muted" style="font-size:0.75em">이동평균(MA) = 최근 N일 평균 주가. 단기선이 장기선 위에 있으면 "상승 추세", 아래면 "하락 추세"</span>');
+    return lines.join("<br>");
   }
   function gradeDesc(g, isEtf) {
-    if (g.includes("강력")) return isEtf
-      ? "시장 공포 + ETF 대형 낙폭이 동시에 충족된 최적 매수 타이밍입니다. 분할 매수를 적극 고려하세요."
-      : "시장 공포 + 큰 낙폭 + 우수한 펀더멘탈이 동시에 충족된 최적 매수 타이밍입니다. 분할 매수를 적극 고려하세요.";
-    if (g.includes("매수 고려")) return isEtf
-      ? "시장 공포와 ETF 낙폭 조건이 충족된 매수 고려 구간입니다. 소량부터 분할 접근을 권장합니다."
-      : "일부 조건이 충족된 매수 고려 구간입니다. 추가 하락 가능성을 고려해 소량부터 분할 접근을 권장합니다.";
-    if (g.includes("관망")) return "매수 조건이 부분적으로만 충족됩니다. 시장 상황을 더 지켜보거나 하락 시 준비하는 단계입니다.";
-    return "현재 매수 조건이 불충분합니다. 시장 안정 또는 가격 조정을 기다리는 것을 권장합니다.";
+    if (g.includes("강력")) return '🏆 <strong>최적 매수 타이밍</strong> — 시장 공포·낙폭·기술적 지표가 모두 우호적입니다.<br>70점 이상은 역사적으로 높은 수익률을 기록한 구간입니다.<br><span class="text-info">💡 분할 매수를 적극 고려하세요. (예: 3번에 나눠서 매수)</span>';
+    if (g.includes("매수 고려")) return '✅ <strong>매수 고려 구간</strong> — 일부 조건이 충족된 상태입니다.<br><span class="text-info">💡 한 번에 큰 금액보다 소량씩 나눠 매수(분할 매수)하는 방식을 권장합니다.</span>';
+    if (g.includes("관망")) return '🔵 <strong>관망 단계</strong> — 매수 조건이 부분적으로만 충족됩니다.<br>추가 하락 시 매수 신호가 강해질 수 있습니다.<br><span class="text-info">💡 현금을 보유하며 더 좋은 기회를 기다리세요.</span>';
+    return '⚪ <strong>매수 보류</strong> — 현재 매수 조건이 불충분합니다.<br>시장이 안정되거나 가격이 더 내려올 때를 기다리는 것이 유리합니다.';
   }
 
   /* 점수 진행바 HTML */
@@ -519,29 +569,36 @@ document.addEventListener("click", function (e) {
   }
   html += '</div>';
 
-  /* 점수 구성 3개 카드 */
+  /* 점수 구성 4개 카드 */
   html += '<div class="row g-3 mb-3">';
 
   /* 시장 공포 점수 */
-  html += '<div class="col-md-4"><div class="card p-3 h-100 border-danger border-opacity-25">';
+  html += '<div class="col-md-3"><div class="card p-3 h-100 border-danger border-opacity-25">';
   html += '<div class="small fw-bold text-danger mb-1">🔴 시장 공포 점수 &nbsp;' + fear + '/100</div>';
   html += progressBar(fear, 100, "#e74c3c");
   html += '<div class="small text-muted mt-2">' + fearDesc(fear) + '</div>';
   html += '</div></div>';
 
   /* 낙폭 점수 */
-  html += '<div class="col-md-4"><div class="card p-3 h-100 border-warning border-opacity-25">';
+  html += '<div class="col-md-3"><div class="card p-3 h-100 border-warning border-opacity-25">';
   html += '<div class="small fw-bold text-warning mb-1">🟠 낙폭 점수 &nbsp;' + ddScore + '/100</div>';
   html += progressBar(ddScore, 100, "#f39c12");
   html += '<div class="small text-muted mt-2">' + ddDesc(athDd, isEtf) + '</div>';
   html += '</div></div>';
 
   /* 펀더멘탈 점수 */
-  html += '<div class="col-md-4"><div class="card p-3 h-100 border-success border-opacity-25">';
+  html += '<div class="col-md-3"><div class="card p-3 h-100 border-success border-opacity-25">';
   html += '<div class="small fw-bold text-success mb-1">🟢 펀더멘탈 ' +
     (fundScore != null ? fundScore + '/100' : 'ETF') + '</div>';
-  if (fundScore != null) progressBar(fundScore, 100, "#27ae60");
+  if (fundScore != null) html += progressBar(fundScore, 100, "#27ae60");
   html += '<div class="small text-muted mt-2">' + fundDesc(fundScore, buyRatio, fpe, roe, peg, fcf) + '</div>';
+  html += '</div></div>';
+
+  /* 기술적 분석 점수 */
+  html += '<div class="col-md-3"><div class="card p-3 h-100 border-info border-opacity-25">';
+  html += '<div class="small fw-bold text-info mb-1">🔵 기술적 분석 &nbsp;' + techScore + '/100</div>';
+  html += progressBar(techScore, 100, "#2980b9");
+  html += '<div class="small text-muted mt-2">' + techDesc(techScore, rsiVal, macdBull, maSignal) + '</div>';
   html += '</div></div>';
 
   html += '</div>';
@@ -571,12 +628,13 @@ document.addEventListener("click", function (e) {
   html += '<div class="card bg-light p-3 small">';
   html += '<div class="fw-bold mb-1">📐 점수 계산식</div>';
   if (isEtf) {
-    html += '<code>' + fear + ' × 0.5 + ' + ddScore + ' × 0.5 = ' + (baseScore) + '점</code>';
-    html += ' (ETF: 공포·낙폭만 적용)';
+    html += '<code>' + fear + ' × 0.35 + ' + ddScore + ' × 0.35 + ' +
+      techScore + ' × 0.30 = ' + baseScore + '점</code>';
+    html += ' (ETF: 공포·낙폭·기술적)';
   } else {
-    html += '<code>' + fear + ' × 0.3 + ' + ddScore + ' × 0.4 + ' +
-      (fundScore || 0) + ' × 0.3 = ' + baseScore + '점</code>';
-    html += ' (주식: 공포·낙폭·펀더멘탈)';
+    html += '<code>' + fear + ' × 0.25 + ' + ddScore + ' × 0.30 + ' +
+      (fundScore || 0) + ' × 0.25 + ' + techScore + ' × 0.20 = ' + baseScore + '점</code>';
+    html += ' (주식: 공포·낙폭·펀더멘탈·기술적)';
   }
   if (recession > 0 || m2Adj !== 0) {
     if (recession > 0) html += ' &nbsp;- <span class="text-danger">' + recession + '점(침체)</span>';
@@ -689,13 +747,13 @@ document.addEventListener("click", function (e) {
     return 0;
   }
 
-  /* 최종 추천점수 계산 */
-  function calcTotalScore(fearScore, drawdownScore, fundamentalScore, isEtf, recessionPenalty) {
+  /* 최종 추천점수 계산 (가중치는 scoring.py와 동일하게 유지) */
+  function calcTotalScore(fearScore, drawdownScore, fundamentalScore, techScore, isEtf, recessionPenalty) {
     var total;
     if (isEtf) {
-      total = Math.round(fearScore * 0.5 + drawdownScore * 0.5);
+      total = Math.round(fearScore * 0.35 + drawdownScore * 0.35 + (techScore || 0) * 0.30);
     } else {
-      total = Math.round(fearScore * 0.3 + drawdownScore * 0.4 + (fundamentalScore || 0) * 0.3);
+      total = Math.round(fearScore * 0.25 + drawdownScore * 0.30 + (fundamentalScore || 0) * 0.25 + (techScore || 0) * 0.20);
     }
     return Math.max(0, total - (recessionPenalty || 0));
   }
@@ -785,6 +843,7 @@ document.addEventListener("click", function (e) {
             var fundamentalScore = badgeEl.dataset.fundamental !== ""
                                   ? parseFloat(badgeEl.dataset.fundamental)
                                   : null;
+            var techScore        = parseFloat(badgeEl.dataset.technical || 0);
             var recessionPenalty = parseFloat(badgeEl.dataset.recession || 0);
             var isEtf            = badgeEl.dataset.isEtf === "true";
 
@@ -792,7 +851,7 @@ document.addEventListener("click", function (e) {
             var newDrawdownScore = isEtf ? calcEtfDrawdownScore(newDrawdownPct)
                                          : calcDrawdownScore(newDrawdownPct);
             var newTotal         = calcTotalScore(fearScore, newDrawdownScore,
-                                                  fundamentalScore, isEtf, recessionPenalty);
+                                                  fundamentalScore, techScore, isEtf, recessionPenalty);
             var gradeInfo        = getGradeInfo(newTotal);
 
             /* 등급 배지 갱신 */

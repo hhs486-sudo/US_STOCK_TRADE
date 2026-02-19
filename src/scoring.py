@@ -32,40 +32,122 @@ def calc_etf_drawdown_score(ath_drawdown_pct: float | None) -> int:
     return 0
 
 
+def calc_technical_score(stock_data: dict) -> int:
+    """
+    개별 종목 기술적 지표 점수 (0~100).
+    RSI(14) + MACD(12,26,9) + MA 배열 신호 합산.
+    """
+    score = 0
+
+    # RSI 신호 (0~40pt): 과매도일수록 매수 신호
+    rsi = stock_data.get("rsi")
+    if rsi is not None:
+        if rsi <= 30:
+            score += 40   # 과매도 → 강력 매수 신호
+        elif rsi <= 40:
+            score += 25   # 약세
+        elif rsi <= 50:
+            score += 10   # 중립↓
+        elif rsi > 70:
+            score += 0    # 과매수 → 매수 불리
+        else:
+            score += 5    # 그 외 (50~70 중립↑)
+
+    # MACD 신호 (0~30pt): MACD > Signal이면 상승 모멘텀
+    macd_bullish = stock_data.get("macd_bullish")
+    if macd_bullish is True:
+        score += 30   # 상승세
+    # False 또는 None → 0pt
+
+    # MA 배열 신호 (0~30pt): 황금배열=상승 추세
+    ma_signal = stock_data.get("ma_signal", "neutral")
+    if ma_signal == "bullish":
+        score += 30   # 황금 배열 (price > MA20 > MA60)
+    elif ma_signal == "neutral":
+        score += 15   # 중립
+    # bearish (역배열) → 0pt
+
+    return min(score, 100)
+
+
 def calc_fundamental_score(stock_data: dict) -> int | None:
     """
     주식 전용 펀더멘탈 점수 (0~100).
     ETF는 None 반환 (적용 불가).
+    밸류에이션: PEG 우선, 없으면 Forward PE.
+    재무건전성 보너스/패널티 포함.
     """
     if stock_data.get("is_etf"):
         return None
 
     score = 0
 
+    # 애널리스트 Buy 비율 (0~30pt)
     buy_ratio = stock_data.get("buy_ratio_pct")
     if buy_ratio is not None:
         if buy_ratio >= 70:
-            score += 40
-        elif buy_ratio >= 50:
-            score += 20
-
-    forward_pe = stock_data.get("forward_pe")
-    if forward_pe is not None and forward_pe > 0:
-        if forward_pe < 15:
             score += 30
-        elif forward_pe < 20:
-            score += 25
-        elif forward_pe < 25:
-            score += 20
+        elif buy_ratio >= 50:
+            score += 15
 
+    # 밸류에이션 (0~30pt): PEG 우선, 없으면 Forward PE
+    peg = stock_data.get("peg")
+    forward_pe = stock_data.get("forward_pe")
+    if peg is not None and peg > 0:
+        if peg < 1:
+            score += 30   # 성장 대비 저평가
+        elif peg <= 2:
+            score += 20   # 적정
+        else:
+            score += 5    # 고평가
+    elif forward_pe is not None and forward_pe > 0:
+        if forward_pe < 15:
+            score += 25
+        elif forward_pe < 20:
+            score += 20
+        elif forward_pe < 25:
+            score += 15
+
+    # FCF 양수 (0~20pt)
     if stock_data.get("fcf_positive"):
         score += 20
 
+    # 성장성 (0~15pt): EPS + 매출 중복 적용 가능
     eps_growth = stock_data.get("eps_growth_pct")
-    if eps_growth is not None and eps_growth > 10:
-        score += 10
+    revenue_growth = stock_data.get("revenue_growth_pct")
+    if eps_growth is not None and eps_growth > 15:
+        score += 15   # 고성장
+    elif eps_growth is not None and eps_growth > 10:
+        score += 10   # 성장
+    if revenue_growth is not None and revenue_growth > 10:
+        score += 5    # 매출 성장 가산 (EPS와 중복 가능)
 
-    return min(score, 100)
+    # ROE (0~10pt): 자기자본이익률
+    roe = stock_data.get("roe")
+    if roe is not None:
+        if roe > 20:
+            score += 10   # 우량
+        elif roe > 15:
+            score += 5    # 양호
+
+    # 재무 건전성 보너스/패널티 (cap에서 흡수)
+    health_adj = 0
+    debt_to_equity = stock_data.get("debt_to_equity")
+    current_ratio = stock_data.get("current_ratio")
+    if debt_to_equity is not None:
+        if debt_to_equity < 0.3:
+            health_adj += 5    # 우량 (부채 매우 낮음)
+        elif debt_to_equity > 5.0:
+            health_adj -= 10   # 위험 (과도한 부채)
+        elif debt_to_equity > 2.0:
+            health_adj -= 5    # 경계
+    if current_ratio is not None:
+        if current_ratio > 2.0:
+            health_adj += 5    # 안전 (유동성 충분)
+        elif current_ratio < 1.0:
+            health_adj -= 5    # 유동성 위험
+
+    return max(0, min(score + health_adj, 100))
 
 
 def calc_m2_adjustment(m2_yoy: float | None, consecutive_months: int = 1) -> int:
@@ -158,8 +240,8 @@ def calc_recommendation_score(fear_score: int, stock_data: dict,
     """
     최종 추천 점수 및 등급 산출.
 
-    주식: total = fear_score×0.3 + drawdown_score×0.4 + fundamental_score×0.3
-    ETF:  total = fear_score×0.5 + drawdown_score×0.5  (펀더멘탈 없음)
+    주식: total = fear×0.25 + drawdown×0.30 + fundamental×0.25 + technical×0.20
+    ETF:  total = fear×0.35 + drawdown×0.35 + technical×0.30  (펀더멘탈 없음)
     장단기 금리차 역전 시 침체 패널티 차감.
     M2 유동성: 15%↑ +10보너스 / 7~15% +5 / 0~7% 0 / 수축 -7~-15 패널티.
     """
@@ -170,14 +252,22 @@ def calc_recommendation_score(fear_score: int, stock_data: dict,
     else:
         drawdown_score = calc_drawdown_score(stock_data.get("ath_drawdown_pct"))
     fundamental_score = calc_fundamental_score(stock_data)  # ETF → None
+    technical_score   = calc_technical_score(stock_data)    # 모든 종목 적용
 
     if is_etf:
-        total = round(fear_score * 0.5 + drawdown_score * 0.5)
-    else:
+        # ETF: 기술적 지표 포함 (펀더멘탈 대체)
         total = round(
-            fear_score * 0.3
-            + drawdown_score * 0.4
-            + (fundamental_score or 0) * 0.3
+            fear_score * 0.35
+            + drawdown_score * 0.35
+            + technical_score * 0.30
+        )
+    else:
+        # 주식: 4가지 요소 반영
+        total = round(
+            fear_score * 0.25
+            + drawdown_score * 0.30
+            + (fundamental_score or 0) * 0.25
+            + technical_score * 0.20
         )
 
     # 장단기 금리차 역전 패널티 (침체 우려 시 점수 하향)
@@ -242,6 +332,7 @@ def calc_recommendation_score(fear_score: int, stock_data: dict,
         "fear_score":         fear_score,
         "drawdown_score":     drawdown_score,
         "fundamental_score":  fundamental_score,   # ETF는 None
+        "technical_score":    technical_score,     # 모든 종목 적용
         "recession_penalty":  recession_penalty,
         "m2_adjustment":      m2_adjustment,        # 양수=보너스, 음수=패널티
         "is_etf":             is_etf,

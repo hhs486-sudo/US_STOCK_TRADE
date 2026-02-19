@@ -17,6 +17,7 @@ CACHE_TTL = {
     "vix":        3600,
     "market_rsi": 3600,
     "cpi":         86400,
+    "m2":          86400,   # 월간 데이터, 하루 1회 갱신
     "yield_curve": 3600,
     "stock":       int(os.getenv("CACHE_TTL_STOCK", 21600)),
     "price":      int(os.getenv("CACHE_TTL_PRICE", 10)),    # 현재가 전용: 10초 캐시 (AJAX 갱신 주기와 동일)

@@ -68,6 +68,69 @@ def calc_fundamental_score(stock_data: dict) -> int | None:
     return min(score, 100)
 
 
+def calc_m2_adjustment(m2_yoy: float | None, consecutive_months: int = 1) -> int:
+    """
+    M2 통화량 YoY 증가율 × 시차(Lag) 가중치 기반 점수 조정.
+
+    M2와 주가 사이에는 6~12개월 시차가 존재하므로,
+    "방향(수축/확장)" × "추세 지속 기간" 조합으로 실제 시장 영향 시점을 반영.
+
+    ─ 기본 점수 (방향별) ─────────────────────────
+      YoY ≥ 15%:  유동성 과잉  → base +10
+      YoY  7~15%: 유동성 풍부  → base  +5
+      YoY  0~ 7%: 중립/건강    → base   0  (시차 무관)
+      YoY -2~ 0%: 유동성 수축  → base  -7
+      YoY < -2%:  심각 수축    → base -15
+
+    ─ 시차(Lag) 가중치 ────────────────────────────
+    [수축 구간]
+      1~ 3개월:  0.3 → 경보 단계, 실제 영향까지 6~12개월 남음
+      4~ 6개월:  0.6 → 기업 실적 영향 가시화 시작
+      7~12개월:  1.0 → 실제 경제·기업 타격 최대
+      13개월 +:  0.7 → 정점 통과, 회복 가능성 증가
+
+    [확장 구간]
+      1~ 3개월:  0.4 → 선행 신호, 주가 아직 미반영 (미래 수혜)
+      4~ 9개월:  0.8 → 유동성 효과 가시화
+      10개월 +:  0.4 → 이미 주가에 반영됐을 가능성 높음
+    """
+    if m2_yoy is None:
+        return 0
+
+    # 기본 점수 결정
+    if m2_yoy >= 15:
+        base = 10
+    elif m2_yoy >= 7:
+        base = 5
+    elif m2_yoy >= 0:
+        return 0        # 중립 구간: 시차 고려 불필요
+    elif m2_yoy >= -2:
+        base = -7
+    else:
+        base = -15
+
+    # 시차 가중치 적용
+    months = max(1, consecutive_months)
+    if base < 0:        # ── 수축 구간 가중치 ──
+        if months <= 3:
+            weight = 0.3    # 경보 단계
+        elif months <= 6:
+            weight = 0.6    # 영향 가시화 시작
+        elif months <= 12:
+            weight = 1.0    # 실제 영향 최대
+        else:
+            weight = 0.7    # 정점 통과, 회복 신호
+    else:               # ── 확장 구간 가중치 ──
+        if months <= 3:
+            weight = 0.4    # 선행 신호
+        elif months <= 9:
+            weight = 0.8    # 효과 가시화
+        else:
+            weight = 0.4    # 이미 주가에 반영
+
+    return round(base * weight)
+
+
 def calc_recession_penalty(yield_spread) -> int:
     """
     장단기 금리차(10년-2년) 역전 시 침체 우려 패널티 (0~25점 차감).
@@ -90,13 +153,15 @@ def calc_recession_penalty(yield_spread) -> int:
 
 
 def calc_recommendation_score(fear_score: int, stock_data: dict,
-                               yield_spread=None) -> dict:
+                               yield_spread=None, m2_yoy=None,
+                               m2_consecutive: int = 1) -> dict:
     """
     최종 추천 점수 및 등급 산출.
 
     주식: total = fear_score×0.3 + drawdown_score×0.4 + fundamental_score×0.3
     ETF:  total = fear_score×0.5 + drawdown_score×0.5  (펀더멘탈 없음)
     장단기 금리차 역전 시 침체 패널티 차감.
+    M2 유동성: 15%↑ +10보너스 / 7~15% +5 / 0~7% 0 / 수축 -7~-15 패널티.
     """
     is_etf = stock_data.get("is_etf", False)
     # ETF는 지수추종 특성상 낙폭 기준이 다름 (5~20% 구간)
@@ -117,7 +182,9 @@ def calc_recommendation_score(fear_score: int, stock_data: dict,
 
     # 장단기 금리차 역전 패널티 (침체 우려 시 점수 하향)
     recession_penalty = calc_recession_penalty(yield_spread)
-    total = max(0, total - recession_penalty)
+    # M2 통화량 유동성 조정 (시차 가중치 포함, 양수=보너스 가산, 음수=패널티 차감)
+    m2_adjustment = calc_m2_adjustment(m2_yoy, m2_consecutive)
+    total = max(0, min(100, total - recession_penalty + m2_adjustment))
 
     if total >= 70:
         grade = "★ 강력 매수"
@@ -160,12 +227,23 @@ def calc_recommendation_score(fear_score: int, stock_data: dict,
     elif recession_penalty >= 5:
         reasons.append("금리차 플랫(-5)")
 
+    # M2 유동성 조정 근거 추가
+    if m2_adjustment >= 10:
+        reasons.append("💧 M2 과잉 유동성(+10)")
+    elif m2_adjustment >= 5:
+        reasons.append("💧 M2 유동성 풍부(+5)")
+    elif m2_adjustment <= -15:
+        reasons.append("⚠ M2 심각 수축(-15)")
+    elif m2_adjustment <= -7:
+        reasons.append("⚠ M2 수축(-7)")
+
     return {
         "total_score":        total,
         "fear_score":         fear_score,
         "drawdown_score":     drawdown_score,
         "fundamental_score":  fundamental_score,   # ETF는 None
         "recession_penalty":  recession_penalty,
+        "m2_adjustment":      m2_adjustment,        # 양수=보너스, 음수=패널티
         "is_etf":             is_etf,
         "grade":              grade,
         "grade_color":        grade_color,

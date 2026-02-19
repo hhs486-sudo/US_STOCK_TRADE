@@ -291,7 +291,8 @@ def get_live_prices(tickers: list[str]) -> dict:
 
 
 def enrich_watchlist(tickers: list[str], fear_score: int,
-                     yield_spread=None) -> list[dict]:
+                     yield_spread=None, m2_yoy=None,
+                     m2_consecutive: int = 1) -> list[dict]:
     """
     Watchlist 종목 전체 데이터 수집 + 추천 점수, 점수 내림차순 정렬.
 
@@ -309,7 +310,9 @@ def enrich_watchlist(tickers: list[str], fear_score: int,
     for ticker in tickers:
         data = stock_futures[ticker].result()
         score_data = scoring.calc_recommendation_score(fear_score, data,
-                                                       yield_spread=yield_spread)
+                                                       yield_spread=yield_spread,
+                                                       m2_yoy=m2_yoy,
+                                                       m2_consecutive=m2_consecutive)
         results.append({**data, **score_data})
 
     results.sort(key=lambda x: x.get("total_score") or 0, reverse=True)

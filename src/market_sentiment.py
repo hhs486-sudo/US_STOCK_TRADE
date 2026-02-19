@@ -235,6 +235,121 @@ def get_cpi() -> dict:
         return cache_get_raw(key) or {"available": False, "reason": "조회 실패"}
 
 
+def get_m2() -> dict:
+    """
+    M2 통화량 YoY 증가율 조회 (FRED M2SL).
+
+    M2(광의통화)는 시장 유동성의 핵심 지표.
+    YoY 증가율이 높을수록 유동성 풍부 → 증시 우호,
+    마이너스(수축)이면 유동성 긴축 → 증시 하락 압력.
+
+    반환:
+        {
+            "available":    True,
+            "latest_value": 5.2,        # YoY 증가율 (%)
+            "latest_date":  "2024-01",
+            "prev_value":   4.8,        # 전월 YoY 증가율
+            "trend":        "up",       # up / down / flat
+            "level":        "expanding",
+            "level_label":  "유동성 풍부",
+            "color":        "#27ae60",
+            "history":      [...],
+            "updated":      "...",
+        }
+    """
+    key = "m2"
+    cached = cache_get(key, config.CACHE_TTL["m2"])
+    if cached:
+        return cached
+
+    if not config.FRED_API_KEY:
+        return {"available": False, "reason": "FRED_API_KEY not set"}
+
+    try:
+        resp = requests.get(
+            "https://api.stlouisfed.org/fred/series/observations",
+            params={
+                "series_id":  "M2SL",           # M2 통화량 (십억 달러, 계절조정)
+                "api_key":    config.FRED_API_KEY,
+                "sort_order": "desc",
+                "limit":      26,               # YoY 14개월치 계산: 14 + 12 = 26개 필요
+                "file_type":  "json",
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        obs = resp.json()["observations"]
+
+        # 유효한 값만 추출
+        values = [float(o["value"]) for o in obs if o["value"] != "."]
+        dates  = [o["date"][:7] for o in obs if o["value"] != "."]
+
+        # ── 최대 14개월치 YoY 시리즈 계산 ──
+        # yoy[i] = (values[i] / values[i+12] - 1) × 100  (전년 동월 대비)
+        yoy_series = []
+        for i in range(min(14, len(values) - 12)):
+            yoy_val = round((values[i] / values[i + 12] - 1) * 100, 2)
+            yoy_series.append({"date": dates[i], "yoy": yoy_val})
+
+        yoy_rate      = yoy_series[0]["yoy"] if yoy_series else None
+        yoy_rate_prev = yoy_series[1]["yoy"] if len(yoy_series) > 1 else None
+
+        # 추세 판단 (전월 YoY 대비)
+        if yoy_rate is not None and yoy_rate_prev is not None:
+            trend = "down" if yoy_rate < yoy_rate_prev else "up"
+        else:
+            trend = "flat"
+
+        # ── 연속 추세 지속 개월 계산 (시차 가중치 산출용) ──
+        # 현재 방향(수축/확장)이 몇 개월째 연속 유지되고 있는지 카운트
+        consecutive_months = 0
+        if yoy_rate is not None:
+            is_contracting = yoy_rate < 0   # 현재 방향: 수축(True) / 확장(False)
+            for entry in yoy_series:
+                if (entry["yoy"] < 0) == is_contracting:
+                    consecutive_months += 1
+                else:
+                    break   # 방향이 바뀌면 중단
+
+        # 유동성 수준 분류 — 전문가 기준 5단계 (매수/매도 타이밍 신호)
+        def _level(rate):
+            if rate is None:
+                return "unknown", "데이터 없음", "#95a5a6"
+            if rate >= 15:
+                return "excess",               "유동성 과잉 (매수 신호)",      "#1a5276"  # 짙은 파랑
+            elif rate >= 7:
+                return "expanding",            "유동성 풍부 (매수 우호)",      "#27ae60"  # 초록
+            elif rate >= 0:
+                return "neutral",              "건강한 성장 (보유/중립)",      "#f1c40f"  # 노랑
+            elif rate >= -2:
+                return "contracting",          "유동성 수축 (주의)",           "#e67e22"  # 주황
+            else:
+                return "severely_contracting", "유동성 심각 수축 (매도 신호)", "#e74c3c"  # 빨강
+
+        level, level_label, color = _level(yoy_rate)
+
+        # history: YoY 시리즈 저장 (차트·모달 표시용)
+        history = yoy_series[:12]
+
+        result = {
+            "available":          True,
+            "latest_value":       yoy_rate,
+            "latest_date":        dates[0],
+            "prev_value":         yoy_rate_prev,
+            "trend":              trend,
+            "level":              level,
+            "level_label":        level_label,
+            "color":              color,
+            "consecutive_months": consecutive_months,  # 현재 추세 연속 지속 개월
+            "history":            history,
+            "updated":            datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+        }
+        cache_set(key, result)
+        return result
+    except Exception:
+        return cache_get_raw(key) or {"available": False, "reason": "조회 실패"}
+
+
 def get_yield_curve() -> dict:
     """
     미국 장단기 금리차 조회 (10년물 - 2년물).

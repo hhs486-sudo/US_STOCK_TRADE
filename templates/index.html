@@ -162,6 +162,40 @@
       {% endif %}
     </div>
   </div>
+
+  <!-- M2 통화량 증가율 -->
+  <div class="col-6 col-md-2">
+    <div class="card h-100 text-center p-3">
+      <div class="text-muted small"
+        data-bs-toggle="tooltip"
+        data-bs-html="true"
+        data-bs-title="M2 통화량 YoY 증가율(FRED).<br>시장 유동성 지표.<br>0%↓ 수축→증시 압박(-7~-15점),<br>5%↑ 확장→증시 우호">
+        M2 증가율 ℹ
+      </div>
+      {% if m2.available %}
+        <div class="display-5 fw-bold mt-1" style="color:{{ m2.color }}">
+          {{ m2.latest_value }}%
+        </div>
+        <div class="small text-muted">
+          {{ m2.latest_date }}
+          {% if m2.trend == 'down' %}↓ 하락{% elif m2.trend == 'up' %}↑ 상승{% else %}→ 보합{% endif %}
+        </div>
+        <div class="badge mt-1" style="background:{{ m2.color }}">{{ m2.level_label }}</div>
+        {% if m2.consecutive_months %}
+          <div class="text-muted mt-1" style="font-size:0.68rem"
+            data-bs-toggle="tooltip" data-bs-html="true"
+            data-bs-title="M2 추세가 {{ m2.consecutive_months }}개월 연속 유지 중.<br>6~12개월 시차로 실제 시장 영향 반영.<br>7개월↑ 수축 = 실제 영향 최대 구간.">
+            {{ m2.consecutive_months }}개월 연속 ℹ
+          </div>
+        {% endif %}
+      {% else %}
+        <div class="text-muted mt-2 small">
+          {% if m2.reason == 'FRED_API_KEY not set' %}FRED API 키 미설정
+          {% else %}N/A{% endif %}
+        </div>
+      {% endif %}
+    </div>
+  </div>
 </div>
 
 <!-- 공포 종합 점수 -->
@@ -293,6 +327,7 @@
               data-drawdown-score="{{ s.drawdown_score }}"
               data-fundamental="{{ s.fundamental_score if s.fundamental_score is not none else '' }}"
               data-recession="{{ s.recession_penalty if s.recession_penalty is defined else 0 }}"
+              data-m2-adj="{{ s.m2_adjustment if s.m2_adjustment is defined else 0 }}"
               data-ath-drawdown="{{ s.ath_drawdown_pct }}"
               data-buy-ratio="{{ s.buy_ratio_pct if s.buy_ratio_pct is not none else '' }}"
               data-forward-pe="{{ s.forward_pe if s.forward_pe is not none else '' }}"
@@ -363,6 +398,7 @@ document.addEventListener("click", function (e) {
   var ddScore     = parseInt(badge.dataset.drawdownScore);
   var fundScore   = badge.dataset.fundamental !== "" ? parseInt(badge.dataset.fundamental) : null;
   var recession   = parseInt(badge.dataset.recession || "0");
+  var m2Adj       = parseInt(badge.dataset.m2Adj || "0");  /* 양수=보너스, 음수=패널티 */
   var athDd       = parseFloat(badge.dataset.athDrawdown);
   var buyRatio    = badge.dataset.buyRatio !== "" ? parseFloat(badge.dataset.buyRatio) : null;
   var fpe         = badge.dataset.forwardPe !== "" ? parseFloat(badge.dataset.forwardPe) : null;
@@ -420,6 +456,13 @@ document.addEventListener("click", function (e) {
     if (penalty >= 5)  return "장단기 금리차 플랫화 — 경기 둔화 주의 (-5점 반영)";
     return "장단기 금리차 정상 — 침체 패널티 없음";
   }
+  function m2Desc(adj) {
+    if (adj >= 10) return "M2 통화량 급증(YoY 15%↑) — 유동성 과잉, 위험자산 강력 매수 신호 (+10점 반영)";
+    if (adj >= 5)  return "M2 통화량 확장(YoY 7~15%) — 유동성 풍부, 매수 우호 환경 (+5점 반영)";
+    if (adj >= 0)  return "M2 통화량 중립/건강한 성장(YoY 0~7%) — 유동성 안정, 조정 없음";
+    if (adj >= -7) return "M2 통화량 수축(YoY 0~-2%) — 유동성 감소 구간, 증시 부담 (-7점 반영)";
+    return "M2 통화량 심각 수축(YoY -2%↓) — 유동성 급격히 줄어 증시 하락 압력 강함 (-15점 반영)";
+  }
   function gradeDesc(g, isEtf) {
     if (g.includes("강력")) return isEtf
       ? "시장 공포 + ETF 대형 낙폭이 동시에 충족된 최적 매수 타이밍입니다. 분할 매수를 적극 고려하세요."
@@ -439,7 +482,7 @@ document.addEventListener("click", function (e) {
   }
 
   /* ── 모달 본문 구성 ── */
-  var baseScore = total + recession;  /* 패널티 전 점수 */
+  var baseScore = total + recession - m2Adj;  /* 조정 전 원점수 (보너스는 빼고, 패널티는 더해서 환원) */
   var html = '';
 
   /* 종합 점수 */
@@ -452,8 +495,15 @@ document.addEventListener("click", function (e) {
   html += progressBar(total, 100, gradeColor);
   html += '<div class="mt-2 small">' + gradeDesc(grade, isEtf) + '</div>';
   html += '</div></div>';
-  if (recession > 0) {
-    html += '<div class="alert alert-warning py-1 small mb-0">⚠ 침체 패널티 -' + recession + '점 차감 (원점수: ' + baseScore + '점)</div>';
+  if (recession > 0 || m2Adj !== 0) {
+    var adjParts = [];
+    if (recession > 0) adjParts.push("침체 -" + recession + "점");
+    if (m2Adj > 0)     adjParts.push('<span class="text-success fw-bold">M2 유동성 +' + m2Adj + '점</span>');
+    if (m2Adj < 0)     adjParts.push("M2수축 " + m2Adj + "점");
+    var alertCls = (recession > 0 || m2Adj < 0) ? "warning" : "success";
+    var alertIcon = (m2Adj > 0 && recession === 0) ? "💧" : "⚠";
+    html += '<div class="alert alert-' + alertCls + ' py-1 small mb-0">' + alertIcon + ' 점수 조정: ' +
+      adjParts.join(", ") + ' (원점수: ' + baseScore + '점)</div>';
   }
   html += '</div>';
 
@@ -484,12 +534,25 @@ document.addEventListener("click", function (e) {
 
   html += '</div>';
 
-  /* 침체 리스크 */
-  html += '<div class="card p-3 mb-3 border-' +
+  /* 침체 리스크 + 유동성 리스크 (2열 카드) */
+  html += '<div class="row g-3 mb-3">';
+
+  /* 경기침체 리스크 */
+  html += '<div class="col-md-6"><div class="card p-3 h-100 border-' +
     (recession >= 25 ? "danger" : recession >= 15 ? "warning" : recession >= 5 ? "info" : "success") +
     ' border-opacity-25">';
-  html += '<div class="small fw-bold mb-1">📊 경기침체 리스크</div>';
+  html += '<div class="small fw-bold mb-1">📉 경기침체 리스크</div>';
   html += '<div class="small text-muted">' + recessionDesc(recession) + '</div>';
+  html += '</div></div>';
+
+  /* 유동성(M2) 현황 — 보너스/패널티 양방향 */
+  html += '<div class="col-md-6"><div class="card p-3 h-100 border-' +
+    (m2Adj <= -15 ? "danger" : m2Adj <= -7 ? "warning" : m2Adj >= 5 ? "success" : "secondary") +
+    ' border-opacity-25">';
+  html += '<div class="small fw-bold mb-1">💧 유동성(M2) ' + (m2Adj > 0 ? '보너스' : '현황') + '</div>';
+  html += '<div class="small text-muted">' + m2Desc(m2Adj) + '</div>';
+  html += '</div></div>';
+
   html += '</div>';
 
   /* 점수 계산식 */
@@ -503,7 +566,12 @@ document.addEventListener("click", function (e) {
       (fundScore || 0) + ' × 0.3 = ' + baseScore + '점</code>';
     html += ' (주식: 공포·낙폭·펀더멘탈)';
   }
-  if (recession > 0) html += ' &nbsp;- <span class="text-danger">' + recession + '점(침체패널티)</span> = <strong>' + total + '점</strong>';
+  if (recession > 0 || m2Adj !== 0) {
+    if (recession > 0) html += ' &nbsp;- <span class="text-danger">' + recession + '점(침체)</span>';
+    if (m2Adj > 0)     html += ' &nbsp;+ <span class="text-success">' + m2Adj + '점(M2보너스)</span>';
+    if (m2Adj < 0)     html += ' &nbsp;- <span class="text-warning">' + Math.abs(m2Adj) + '점(M2수축)</span>';
+    html += ' = <strong>' + total + '점</strong>';
+  }
   html += '</div>';
 
   document.getElementById("modalBody").innerHTML = html;

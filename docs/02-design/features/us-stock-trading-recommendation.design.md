@@ -67,8 +67,9 @@
 │  SQLite or  │  │    get_vix()         ← yfinance ^VIX     │
 │  PostgreSQL │  │    get_market_rsi()  ← pandas-ta RSI(14) │
 │             │  │    get_cpi()         ← FRED CPIAUCSL     │
-│  watchlist  │  │    get_yield_curve() ← FRED DGS10/DGS2   │
-│  cache      │  │    get_fear_score()  ← 종합 공포 점수     │
+│  watchlist  │  │    get_m2()          ← FRED M2SL        │
+│  cache      │  │    get_yield_curve() ← FRED DGS10/DGS2   │
+│             │  │    get_fear_score()  ← 종합 공포 점수     │
 └─────────────┘  │                                          │
                  │  stock_analysis.py                       │
                  │    get_stock_data()  ← yfinance          │
@@ -180,6 +181,7 @@ CREATE TABLE IF NOT EXISTS cache (
 | `vix` | VIX 현재값 + 20일 종가 이력 | 1시간 |
 | `market_rsi` | S&P500, NASDAQ RSI(14) | 1시간 |
 | `cpi` | CPI YoY 변화율 + 12개월 이력 | 24시간 |
+| `m2` | M2 통화량 YoY 증가율 + 연속 지속 개월 + 12개월 이력 | 24시간 |
 | `yield_curve` | 장단기 금리차 (10년-2년) | 1시간 |
 | `stock_{ticker}` | 종목 전체 데이터 (가격, ATH, 펀더멘탈, 차트) | 6시간 |
 | `price_batch_{tickers}` | 배치 현재가 (정렬된 티커 목록) | 10초 |
@@ -301,6 +303,27 @@ def get_cpi() -> dict
     Cache: cpi, TTL 24시간
     """
 
+def get_m2() -> dict
+    """
+    FRED M2SL (M2 통화량, 월간, 계절조정)
+    26개월 데이터로 14개월치 YoY 시리즈 계산.
+    연속 추세 지속 개월(consecutive_months) 산출 → 시차 가중치 적용에 사용.
+    Returns:
+        {
+            "available": True,
+            "latest_value": 3.8,            # YoY 증가율 (%)
+            "latest_date": "2025-12",
+            "prev_value": 3.5,
+            "trend": "up",                  # up / down / flat
+            "level": "neutral",             # excess / expanding / neutral / contracting / severely_contracting
+            "level_label": "건강한 성장 (보유/중립)",
+            "color": "#f1c40f",
+            "consecutive_months": 5,        # 현재 추세 연속 지속 개월
+            "history": [{"date": "...", "yoy": 3.8}, ...]  # 최대 12개월 YoY 이력
+        }
+    Cache: m2, TTL 24시간
+    """
+
 def get_yield_curve() -> dict
     """
     1차: FRED DGS10 - DGS2
@@ -419,7 +442,8 @@ def get_live_prices(tickers: list[str]) -> dict
     """
 
 def enrich_watchlist(tickers: list[str], fear_score: int,
-                     yield_spread=None) -> list[dict]
+                     yield_spread=None, m2_yoy=None,
+                     m2_consecutive: int = 1) -> list[dict]
     """
     Watchlist 종목 전체 데이터 + 추천 점수 병렬 조회.
     결과를 total_score 내림차순으로 정렬하여 반환.
@@ -458,13 +482,27 @@ def calc_recession_penalty(yield_spread) -> int
     >0.5%: 0 / 0~0.5%: 5 / -0.5~0%: 15 / <-0.5%: 25
     """
 
+def calc_m2_adjustment(m2_yoy: float | None, consecutive_months: int = 1) -> int
+    """
+    M2 통화량 YoY × 시차(Lag) 가중치 조정 점수 (-15 ~ +10점).
+
+    [기본 점수]
+      YoY ≥ 15%:  +10 / 7~15%: +5 / 0~7%: 0 / -2~0%: -7 / <-2%: -15
+
+    [시차 가중치 — M2와 주가 사이 6~12개월 Lag 반영]
+    수축: 1~3개월 ×0.3 → 4~6개월 ×0.6 → 7~12개월 ×1.0 → 13개월+ ×0.7
+    확장: 1~3개월 ×0.4 → 4~9개월 ×0.8 → 10개월+ ×0.4
+    """
+
 def calc_recommendation_score(fear_score: int, stock_data: dict,
-                               yield_spread=None) -> dict
+                               yield_spread=None, m2_yoy=None,
+                               m2_consecutive: int = 1) -> dict
     """
     최종 추천 점수 및 등급 산출.
 
-    주식: total = fear×0.3 + drawdown×0.4 + fundamental×0.3 - penalty
-    ETF:  total = fear×0.5 + drawdown×0.5 - penalty
+    주식: total = fear×0.3 + drawdown×0.4 + fundamental×0.3 - recession_penalty + m2_adjustment
+    ETF:  total = fear×0.5 + drawdown×0.5 - recession_penalty + m2_adjustment
+    결과: max(0, min(100, total))
 
     Returns:
         {
@@ -473,6 +511,7 @@ def calc_recommendation_score(fear_score: int, stock_data: dict,
             "drawdown_score": 75,
             "fundamental_score": 80,  # ETF는 None
             "recession_penalty": 0,
+            "m2_adjustment": 4,       # 양수=보너스, 음수=패널티 (시차 가중치 포함)
             "is_etf": False,
             "grade": "★ 강력 매수",
             "grade_color": "#27ae60",
@@ -509,27 +548,31 @@ def calc_recommendation_score(fear_score: int, stock_data: dict,
 #### `GET /` — 메인 대시보드
 
 ```python
-# ThreadPoolExecutor(max_workers=6)로 병렬 호출
+# ThreadPoolExecutor(max_workers=7)로 병렬 호출
 context = {
     "fear_greed":   get_fear_greed(),
     "vix":          get_vix(),
     "market_rsi":   get_market_rsi(),
     "cpi":          get_cpi(),
+    "m2":           get_m2(),
     "yield_curve":  get_yield_curve(),
     "fear_score":   get_fear_score(),
-    "stocks":       enrich_watchlist(tickers, fear_score, yield_spread),
+    "stocks":       enrich_watchlist(tickers, fear_score, yield_spread,
+                                     m2_yoy, m2_consecutive),
 }
 ```
 
 #### `GET /stock/<ticker>` — 종목 상세
 
 ```python
-# ThreadPoolExecutor(max_workers=3)로 병렬 호출
+# ThreadPoolExecutor(max_workers=4)로 병렬 호출
 context = {
     "stock":       get_stock_data(ticker),
-    "score":       calc_recommendation_score(fear_score, stock_data, yield_spread),
+    "score":       calc_recommendation_score(fear_score, stock_data,
+                                             yield_spread, m2_yoy, m2_consecutive),
     "fear_score":  get_fear_score(),
     "yield_curve": get_yield_curve(),
+    "m2":          get_m2(),
 }
 ```
 
@@ -784,6 +827,7 @@ CACHE_TTL = {
     "vix":        3600,
     "market_rsi": 3600,
     "cpi":        86400,
+    "m2":         86400,
     "yield_curve": 3600,
     "stock":      int(os.getenv("CACHE_TTL_STOCK", 21600)),
     "price":      int(os.getenv("CACHE_TTL_PRICE", 10)),
@@ -812,8 +856,8 @@ CACHE_TTL = {
 |--------|---------|------|
 | L1 인메모리 캐시 | `src/db.py` | Neon DB 네트워크 왕복 제거 |
 | 비동기 DB 쓰기 | `cache_set()` daemon thread | 응답 지연 제거 |
-| 시장 지표 병렬 호출 | `index()` ThreadPoolExecutor(6) | 직렬 대비 ~5배 향상 |
-| 종목 상세 병렬 호출 | `stock_detail()` ThreadPoolExecutor(3) | 직렬 대비 ~3배 향상 |
+| 시장 지표 병렬 호출 | `index()` ThreadPoolExecutor(7) | 직렬 대비 ~6배 향상 |
+| 종목 상세 병렬 호출 | `stock_detail()` ThreadPoolExecutor(4) | 직렬 대비 ~4배 향상 |
 | Watchlist 병렬 조회 | `enrich_watchlist()` ThreadPoolExecutor(N) | 종목 수만큼 향상 |
 | AJAX 가격 분리 | `/api/prices` (10초 TTL) | 페이지 렌더링에서 실시간 가격 분리 |
 | 배치 가격 조회 | `get_batch_prices()` yf.download | 개별 조회 대비 API 호출 수 감소 |
@@ -845,3 +889,4 @@ python-dotenv>=1.0.0
 |---------|------|---------|--------|
 | 0.1 | 2026-02-17 | Initial design | - |
 | 1.0 | 2026-02-17 | 구현 완료 반영: 전체 모듈, 성능 최적화, 배포 구조 | - |
+| 1.1 | 2026-02-19 | M2 통화량 지표 추가: get_m2(), calc_m2_adjustment() 시차 가중치, 6개 파일 변경 | - |

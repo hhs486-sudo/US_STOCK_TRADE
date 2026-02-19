@@ -16,13 +16,14 @@ init_db()
 
 @app.route("/")
 def index():
-    # 시장심리 5개 지표 + fear_score 를 동시에 병렬 조회
-    with ThreadPoolExecutor(max_workers=6) as ex:
+    # 시장심리 6개 지표 + fear_score 를 동시에 병렬 조회
+    with ThreadPoolExecutor(max_workers=7) as ex:
         f_fg  = ex.submit(market_sentiment.get_fear_greed)
         f_vix = ex.submit(market_sentiment.get_vix)
         f_rsi = ex.submit(market_sentiment.get_market_rsi)
         f_cpi = ex.submit(market_sentiment.get_cpi)
         f_yc  = ex.submit(market_sentiment.get_yield_curve)
+        f_m2  = ex.submit(market_sentiment.get_m2)
         f_fs  = ex.submit(market_sentiment.get_fear_score)
 
     fear_greed  = f_fg.result()
@@ -30,12 +31,17 @@ def index():
     market_rsi  = f_rsi.result()
     cpi         = f_cpi.result()
     yield_curve = f_yc.result()
+    m2          = f_m2.result()
     fear_score  = f_fs.result()
 
     tickers = watchlist.get_tickers()
     yield_spread = yield_curve.get("spread") if yield_curve.get("available") else None
+    m2_yoy         = m2.get("latest_value") if m2.get("available") else None
+    m2_consecutive = m2.get("consecutive_months", 1) if m2.get("available") else 1
     stocks = stock_analysis.enrich_watchlist(tickers, fear_score,
-                                             yield_spread=yield_spread) if tickers else []
+                                             yield_spread=yield_spread,
+                                             m2_yoy=m2_yoy,
+                                             m2_consecutive=m2_consecutive) if tickers else []
 
     return render_template(
         "index.html",
@@ -44,6 +50,7 @@ def index():
         market_rsi=market_rsi,
         cpi=cpi,
         yield_curve=yield_curve,
+        m2=m2,
         fear_score=fear_score,
         stocks=stocks,
     )
@@ -51,19 +58,26 @@ def index():
 
 @app.route("/stock/<ticker>")
 def stock_detail(ticker):
-    # 공포점수, 금리차, 종목데이터 3개 동시 조회
-    with ThreadPoolExecutor(max_workers=3) as ex:
+    # 공포점수, 금리차, M2, 종목데이터 4개 동시 조회
+    with ThreadPoolExecutor(max_workers=4) as ex:
         f_fs   = ex.submit(market_sentiment.get_fear_score)
         f_yc   = ex.submit(market_sentiment.get_yield_curve)
+        f_m2   = ex.submit(market_sentiment.get_m2)
         f_data = ex.submit(stock_analysis.get_stock_data, ticker.upper())
 
     fear_score  = f_fs.result()
     yield_curve = f_yc.result()
+    m2          = f_m2.result()
     stock_data  = f_data.result()
 
     from src.scoring import calc_recommendation_score
     yield_spread = yield_curve.get("spread") if yield_curve.get("available") else None
-    score = calc_recommendation_score(fear_score, stock_data, yield_spread=yield_spread)
+    m2_yoy         = m2.get("latest_value") if m2.get("available") else None
+    m2_consecutive = m2.get("consecutive_months", 1) if m2.get("available") else 1
+    score = calc_recommendation_score(fear_score, stock_data,
+                                      yield_spread=yield_spread,
+                                      m2_yoy=m2_yoy,
+                                      m2_consecutive=m2_consecutive)
 
     return render_template(
         "stock_detail.html",
